@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { ScreenLoader } from '@/components/common/screen-loader';
 import { useAuth } from './context/auth-context';
@@ -6,37 +5,32 @@ import { useAuth } from './context/auth-context';
 /**
  * Component to protect routes that require authentication.
  * If user is not authenticated, redirects to the login page.
+ *
+ * Note: Auth state is managed by AuthProvider via onAuthStateChange.
+ * No need to verify on every route - just check the current state.
  */
 export const RequireAuth = () => {
-  const { auth, verify, loading: globalLoading } = useAuth();
+  const { session, isLoading, user } = useAuth();
   const location = useLocation();
-  const [loading, setLoading] = useState(true);
-  const verificationStarted = useRef(false);
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      if (!auth?.access_token || !verificationStarted.current) {
-        verificationStarted.current = true;
-        try {
-          await verify();
-        } finally {
-          setLoading(false);
-        }
-      } else {
-        setLoading(false);
-      }
-    };
-
-    checkAuth();
-  }, [auth, verify]);
+  // Debug logging
+  console.log('[RequireAuth]', {
+    isLoading,
+    hasSession: !!session,
+    hasUser: !!user,
+    userId: user?.id,
+    path: location.pathname,
+  });
 
   // Show screen loader while checking authentication
-  if (loading || globalLoading) {
+  if (isLoading) {
+    console.log('[RequireAuth] Still loading, showing loader...');
     return <ScreenLoader />;
   }
 
   // If not authenticated, redirect to login
-  if (!auth?.access_token) {
+  if (!session) {
+    console.log('[RequireAuth] No session, redirecting to signin...');
     return (
       <Navigate
         to={`/auth/signin?next=${encodeURIComponent(location.pathname)}`}
@@ -45,6 +39,7 @@ export const RequireAuth = () => {
     );
   }
 
+  console.log('[RequireAuth] Authenticated, showing protected route');
   // If authenticated, render child routes
   return <Outlet />;
 };

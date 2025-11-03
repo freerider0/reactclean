@@ -1,0 +1,1 @@
+export { NuevaPersonaCompactoPage } from './NuevaPersonaCompactoPage';

@@ -37,20 +37,14 @@ import {
 import { Switch } from '@/components/ui/switch';
 
 export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
-  const { logout, user } = useAuth();
+  const { signOut, user, profile } = useAuth();
   const { currenLanguage, changeLanguage } = useLanguage();
   const { theme, setTheme } = useTheme();
 
-  // Use display data from currentUser
-  const displayName =
-    user?.fullname ||
-    (user?.first_name && user?.last_name
-      ? `${user.first_name} ${user.last_name}`
-      : user?.username || 'User');
-
+  // Use display data from profile and user
+  const displayName = profile?.full_name || user?.email?.split('@')[0] || 'User';
   const displayEmail = user?.email || '';
-  // const displayAvatar = user?.pic || toAbsoluteUrl('/media/avatars/300-2.png');
-  const displayAvatar = toAbsoluteUrl('/media/avatars/300-2.png');
+  const displayAvatar = profile?.avatar_url || toAbsoluteUrl('/media/avatars/300-2.png');
 
   const handleLanguage = (lang: Language) => {
     changeLanguage(lang);
@@ -257,7 +251,13 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
             variant="outline"
             size="sm"
             className="w-full"
-            onClick={logout}
+            onClick={async () => {
+              try {
+                await signOut();
+              } catch (error) {
+                console.error('Logout failed:', error);
+              }
+            }}
           >
             Logout
           </Button>

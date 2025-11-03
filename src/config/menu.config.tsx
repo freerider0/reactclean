@@ -26,6 +26,7 @@ import {
   Grid,
   Heart,
   HelpCircle,
+  Home,
   Kanban,
   Key,
   Layout,
@@ -36,6 +37,7 @@ import {
   Network,
   Users as PeopleIcon,
   Plug,
+  Receipt,
   ScrollText,
   Settings,
   Share2,
@@ -63,6 +65,23 @@ export const MENU_SIDEBAR: MenuConfig = [
     children: [
       { title: 'Light Sidebar', path: '/' },
       { title: 'Dark Sidebar', path: '/dark-sidebar' },
+    ],
+  },
+  { heading: 'Gestión' },
+  {
+    title: 'Propiedades',
+    icon: Home,
+    children: [
+      { title: 'Todas las Propiedades', path: '/propiedades', disabled: true },
+      { title: 'Nueva Propiedad', path: '/propiedades/new' },
+    ],
+  },
+  {
+    title: 'Facturas',
+    icon: Receipt,
+    children: [
+      { title: 'Todas las Facturas', path: '/facturas', disabled: true },
+      { title: 'Nueva Factura', path: '/facturas/new', disabled: true },
     ],
   },
   { heading: 'User' },

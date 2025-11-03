@@ -209,10 +209,6 @@ export function SidebarMenuDefault() {
     return <AccordionMenuLabel key={index}>{item.heading}</AccordionMenuLabel>;
   };
 
-  // Memoize the menu to prevent unnecessary re-renders
-  const { getChildren } = useMenu(pathname);
-  const menuItems = getChildren(MENU_SIDEBAR, 0);
-
   return (
     <AccordionMenu
       selectedValue={pathname}
@@ -221,7 +217,7 @@ export function SidebarMenuDefault() {
       collapsible
       classNames={classNames}
     >
-      {buildMenu(menuItems || [])}
+      {buildMenu(MENU_SIDEBAR)}
     </AccordionMenu>
   );
 }

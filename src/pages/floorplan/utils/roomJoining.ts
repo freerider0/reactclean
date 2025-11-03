@@ -18,6 +18,8 @@ const ANGLE_TOLERANCE = 10;    // degrees - walls must be within this of opposit
 interface LineSegment {
   p1: Vertex;
   p2: Vertex;
+  edgeIndex?: number; // Track which actual edge this segment corresponds to
+  room?: Room; // Track which room this segment belongs to
 }
 
 interface SegmentPair {
@@ -37,6 +39,10 @@ export interface RoomSnapResult {
   translation: Vertex;   // Delta to add to moving room position
   snapped: boolean;      // true if snap found
   mode?: 'edge-vertex' | 'vertex-only' | 'edge-only';
+  movingRoomId?: string;       // ID of the moving room
+  stationaryRoomId?: string;   // ID of the stationary room
+  movingSegmentWorld?: { p1: Vertex; p2: Vertex };  // Centerline segment in world space
+  stationarySegmentWorld?: { p1: Vertex; p2: Vertex }; // Centerline segment in world space
   debugInfo?: {
     closestMovingSegment?: LineSegment;
     closestStationarySegment?: LineSegment;
@@ -161,13 +167,15 @@ function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
     y: v.y + offset.y
   }));
 
-  // Create segments
+  // Create segments with edge index tracking
   const segments: LineSegment[] = [];
   for (let i = 0; i < offsetVertices.length; i++) {
     const next = (i + 1) % offsetVertices.length;
     segments.push({
       p1: offsetVertices[i],
-      p2: offsetVertices[next]
+      p2: offsetVertices[next],
+      edgeIndex: i,
+      room: room
     });
   }
 
@@ -614,14 +622,44 @@ export function snapRoomToRooms(
       }
     }
 
+    // Get actual wall edges (outer boundary) instead of centerlines
+    let actualMovingWall: LineSegment | undefined;
+    let actualStationaryWall: LineSegment | undefined;
+
+    if (closestPair.moving.room && closestPair.moving.edgeIndex !== undefined) {
+      const room = closestPair.moving.room;
+      const edgeIdx = closestPair.moving.edgeIndex;
+      const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
+      const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+      actualMovingWall = {
+        p1: { x: v1.x + proposedOffset.x, y: v1.y + proposedOffset.y },
+        p2: { x: v2.x + proposedOffset.x, y: v2.y + proposedOffset.y }
+      };
+    }
+
+    if (closestPair.stationary.room && closestPair.stationary.edgeIndex !== undefined) {
+      const room = closestPair.stationary.room;
+      const edgeIdx = closestPair.stationary.edgeIndex;
+      const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
+      const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+      actualStationaryWall = {
+        p1: v1,
+        p2: v2
+      };
+    }
+
     return {
       rotation: 0,
       translation: proposedOffset,
       snapped: true,
       mode: snapMode,
+      movingRoomId: closestPair.moving.room?.id,
+      stationaryRoomId: closestPair.stationary.room?.id,
+      movingSegmentWorld: { p1: closestPair.moving.p1, p2: closestPair.moving.p2 },
+      stationarySegmentWorld: { p1: closestPair.stationary.p1, p2: closestPair.stationary.p2 },
       debugInfo: {
-        closestMovingSegment: closestPair.moving,
-        closestStationarySegment: closestPair.stationary,
+        closestMovingSegment: actualMovingWall || closestPair.moving,
+        closestStationarySegment: actualStationaryWall || closestPair.stationary,
         closestMovingVertex,
         closestStationaryVertex
       }

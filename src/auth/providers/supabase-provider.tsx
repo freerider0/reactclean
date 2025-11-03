@@ -1,126 +1,163 @@
 import { PropsWithChildren, useEffect, useState } from 'react';
-import { SupabaseAdapter } from '@/auth/adapters/supabase-adapter';
+import type { Session } from '@supabase/supabase-js';
 import { AuthContext } from '@/auth/context/auth-context';
-import * as authHelper from '@/auth/lib/helpers';
-import { AuthModel, UserModel } from '@/auth/lib/models';
+import { supabase } from '@/lib/supabase';
 
-// Define the Supabase Auth Provider
+/**
+ * Supabase Auth Provider combining official patterns:
+ * - State management from: https://supabase.com/docs/guides/auth/quickstarts/with-expo-react-native-social-auth
+ * - Auth methods from: https://supabase.com/docs/guides/getting-started/tutorials/with-expo-react-native
+ *
+ * Pattern:
+ * 1. Fetch session on mount with getSession()
+ * 2. Subscribe to auth changes with onAuthStateChange()
+ * 3. Fetch profile when session changes
+ * 4. Provide auth methods that call supabase.auth directly
+ */
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [loading, setLoading] = useState(true);
-  const [auth, setAuth] = useState<AuthModel | undefined>(authHelper.getAuth());
-  const [currentUser, setCurrentUser] = useState<UserModel | undefined>();
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [profile, setProfile] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
 
-  // Check if user is admin
+  // Fetch session once on mount and subscribe to auth state changes
   useEffect(() => {
-    setIsAdmin(currentUser?.is_admin === true);
-  }, [currentUser]);
+    let isMounted = true;
 
-  const verify = async () => {
-    if (auth) {
-      try {
-        const user = await getUser();
-        setCurrentUser(user || undefined);
-      } catch {
-        saveAuth(undefined);
-        setCurrentUser(undefined);
+    // Subscribe to auth state changes first
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('Auth state changed:', _event);
+      if (isMounted) {
+        setSession(session);
+        // Mark initial load as complete after INITIAL_SESSION event
+        if (_event === 'INITIAL_SESSION') {
+          setInitialLoadComplete(true);
+        }
+        // On sign out, clear profile and reset loading
+        if (_event === 'SIGNED_OUT') {
+          setProfile(null);
+          setIsLoading(false);
+        }
       }
-    }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Fetch profile when session changes AND initial load is complete
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchProfile = async () => {
+      // Wait for initial session check to complete
+      if (!initialLoadComplete) {
+        return;
+      }
+
+      if (session) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (error) {
+          console.error('[AuthProvider] Profile fetch error:', error);
+          console.error('[AuthProvider] Error details:', {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+          });
+        }
+
+        if (isMounted) {
+          setProfile(data);
+          setIsLoading(false);
+        }
+      } else {
+        // No session after initial load is complete
+        if (isMounted) {
+          setProfile(null);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session, initialLoadComplete]);
+
+  // Auth methods - calling supabase.auth directly (from official docs)
+  const signIn = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) throw error;
   };
 
-  const saveAuth = (auth: AuthModel | undefined) => {
-    setAuth(auth);
-    if (auth) {
-      authHelper.setAuth(auth);
-    } else {
-      authHelper.removeAuth();
-    }
+  const signUp = async (email: string, password: string, metadata?: any) => {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: metadata,
+      },
+    });
+
+    if (error) throw error;
   };
 
-  const login = async (email: string, password: string) => {
-    try {
-      const auth = await SupabaseAdapter.login(email, password);
-      saveAuth(auth);
-      const user = await getUser();
-      setCurrentUser(user || undefined);
-    } catch (error) {
-      saveAuth(undefined);
-      throw error;
-    }
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   };
 
-  const register = async (
-    email: string,
-    password: string,
-    password_confirmation: string,
-    firstName?: string,
-    lastName?: string,
-  ) => {
-    try {
-      const auth = await SupabaseAdapter.register(
-        email,
-        password,
-        password_confirmation,
-        firstName,
-        lastName,
-      );
-      saveAuth(auth);
-      const user = await getUser();
-      setCurrentUser(user || undefined);
-    } catch (error) {
-      saveAuth(undefined);
-      throw error;
-    }
-  };
+  const updateProfile = async (updates: any) => {
+    if (!session?.user) throw new Error('No user');
 
-  const requestPasswordReset = async (email: string) => {
-    await SupabaseAdapter.requestPasswordReset(email);
-  };
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: session.user.id,
+        ...updates,
+        updated_at: new Date().toISOString(),
+      });
 
-  const resetPassword = async (
-    password: string,
-    password_confirmation: string,
-  ) => {
-    await SupabaseAdapter.resetPassword(password, password_confirmation);
-  };
+    if (error) throw error;
 
-  const resendVerificationEmail = async (email: string) => {
-    await SupabaseAdapter.resendVerificationEmail(email);
-  };
+    // Refresh profile
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
 
-  const getUser = async () => {
-    return await SupabaseAdapter.getCurrentUser();
-  };
-
-  const updateProfile = async (userData: Partial<UserModel>) => {
-    return await SupabaseAdapter.updateUserProfile(userData);
-  };
-
-  const logout = () => {
-    SupabaseAdapter.logout();
-    saveAuth(undefined);
-    setCurrentUser(undefined);
+    setProfile(data);
   };
 
   return (
     <AuthContext.Provider
       value={{
-        loading,
-        setLoading,
-        auth,
-        saveAuth,
-        user: currentUser,
-        setUser: setCurrentUser,
-        login,
-        register,
-        requestPasswordReset,
-        resetPassword,
-        resendVerificationEmail,
-        getUser,
+        session,
+        user: session?.user ?? null,
+        profile,
+        isLoading,
+        isLoggedIn: session !== undefined && session !== null,
+        signIn,
+        signUp,
+        signOut,
         updateProfile,
-        logout,
-        verify,
-        isAdmin,
       }}
     >
       {children}

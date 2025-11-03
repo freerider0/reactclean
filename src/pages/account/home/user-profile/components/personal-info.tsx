@@ -1,3 +1,4 @@
+import { useAuth } from '@/auth/context/auth-context';
 import { AvatarInput } from '@/partials/common/avatar-input';
 import { SquarePen } from 'lucide-react';
 import { Link } from 'react-router';
@@ -7,6 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 
 const PersonalInfo = () => {
+  const { user, profile } = useAuth();
+
+  const displayName = profile?.full_name || user?.email?.split('@')[0] || 'User';
+  const displayEmail = user?.email || '';
+  const displayPhone = profile?.phone || '';
+
   return (
     <Card className="min-w-full">
       <CardHeader>
@@ -33,7 +40,7 @@ const PersonalInfo = () => {
                 Name
               </TableCell>
               <TableCell className="py-2 text-foreground font-normaltext-sm">
-                Jason Tatum
+                {displayName}
               </TableCell>
               <TableCell className="py-2 text-center">
                 <Button variant="ghost" mode="icon">
@@ -41,6 +48,34 @@ const PersonalInfo = () => {
                 </Button>
               </TableCell>
             </TableRow>
+            <TableRow>
+              <TableCell className="py-2 text-secondary-foreground font-normal">
+                Email
+              </TableCell>
+              <TableCell className="py-2 text-foreground font-normaltext-sm">
+                {displayEmail}
+              </TableCell>
+              <TableCell className="py-2 text-center">
+                <Button variant="ghost" mode="icon">
+                  <SquarePen size={16} className="text-blue-500" />
+                </Button>
+              </TableCell>
+            </TableRow>
+            {displayPhone && (
+              <TableRow>
+                <TableCell className="py-2 text-secondary-foreground font-normal">
+                  Phone
+                </TableCell>
+                <TableCell className="py-2 text-foreground font-normaltext-sm">
+                  {displayPhone}
+                </TableCell>
+                <TableCell className="py-2 text-center">
+                  <Button variant="ghost" mode="icon">
+                    <SquarePen size={16} className="text-blue-500" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            )}
             <TableRow>
               <TableCell className="py-3 text-secondary-foreground font-normal">
                 Availability

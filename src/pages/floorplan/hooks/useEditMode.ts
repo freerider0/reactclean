@@ -9,6 +9,7 @@ import { snapToGrid } from '../utils/snapping';
 import { distance, recenterVertices } from '../utils/geometry';
 import { localToWorld, worldToLocal } from '../utils/coordinates';
 import { generateWalls } from '../utils/walls';
+import { solveRoom } from '../utils/constraintSolver';
 
 const DRAG_THRESHOLD = 5; // pixels before starting drag
 
@@ -136,14 +137,51 @@ export function useEditMode(
       y: dragState.originalPosition.y + worldOffset.y
     };
 
-    // Regenerate walls
-    const newWalls = generateWalls(centeredVertices, selectedRoom.wallThickness);
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      dragState.originalVertices // Pass original vertices for matching
+    );
 
-    updateRoom(selectedRoom.id, {
-      vertices: centeredVertices,
-      walls: newWalls,
-      position: newPosition
-    });
+    // Check if we need to auto-solve constraints in real-time
+    const hasEnabledConstraints = selectedRoom.constraints && selectedRoom.constraints.some(c => c.enabled);
+
+    if (hasEnabledConstraints) {
+      // Create temporary room with updated vertices for solving
+      const tempRoom = {
+        ...selectedRoom,
+        vertices: centeredVertices,
+        walls: newWalls,
+        position: newPosition
+      };
+
+      // Solve constraints (fix the dragged vertex so it stays where user put it)
+      solveRoom(tempRoom, vertexIndex).then(solvedRoom => {
+        updateRoom(selectedRoom.id, {
+          vertices: solvedRoom.vertices,
+          walls: solvedRoom.walls,
+          position: newPosition,
+          primitives: solvedRoom.primitives
+        });
+      }).catch(error => {
+        console.error('Error solving during vertex drag:', error);
+        // Fallback: update without solving
+        updateRoom(selectedRoom.id, {
+          vertices: centeredVertices,
+          walls: newWalls,
+          position: newPosition
+        });
+      });
+    } else {
+      // No constraints, just update normally
+      updateRoom(selectedRoom.id, {
+        vertices: centeredVertices,
+        walls: newWalls,
+        position: newPosition
+      });
+    }
   }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom]);
 
   /**
@@ -270,8 +308,13 @@ export function useEditMode(
       y: dragState.originalPosition.y + worldOffset.y
     };
 
-    // Regenerate walls
-    const newWalls = generateWalls(centeredVertices, selectedRoom.wallThickness);
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      dragState.originalVertices // Pass original vertices for matching
+    );
 
     updateRoom(selectedRoom.id, {
       vertices: centeredVertices,
@@ -378,8 +421,13 @@ export function useEditMode(
       y: selectedRoom.position.y + worldOffset.y
     };
 
-    // Regenerate walls
-    const newWalls = generateWalls(centeredVertices, selectedRoom.wallThickness);
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      selectedRoom.vertices // Pass original vertices for matching
+    );
 
     updateRoom(selectedRoom.id, {
       vertices: centeredVertices,
@@ -423,8 +471,13 @@ export function useEditMode(
       y: selectedRoom.position.y + worldOffset.y
     };
 
-    // Regenerate walls
-    const newWalls = generateWalls(centeredVertices, selectedRoom.wallThickness);
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      selectedRoom.vertices // Pass original vertices for matching
+    );
 
     updateRoom(selectedRoom.id, {
       vertices: centeredVertices,
@@ -432,6 +485,146 @@ export function useEditMode(
       position: newPosition
     });
   }, [selectedRoom, updateRoom]);
+
+  /**
+   * Start dragging a wall
+   */
+  const startWallDrag = useCallback((
+    wallIndex: number,
+    worldPoint: Vertex,
+    screenPoint: { x: number; y: number }
+  ) => {
+    if (!selectedRoom) return;
+
+    dragStartRef.current = screenPoint;
+
+    setDragState({
+      isDragging: false,
+      dragType: 'edge', // Use 'edge' type since wall dragging is the same as edge dragging
+      startPoint: worldPoint,
+      originalVertices: [...selectedRoom.vertices],
+      originalPosition: { ...selectedRoom.position },
+      originalRotation: selectedRoom.rotation,
+      originalScale: selectedRoom.scale
+    });
+  }, [selectedRoom]);
+
+  /**
+   * Update wall drag (move both vertices of the wall)
+   */
+  const updateWallDrag = useCallback((
+    wallIndex: number,
+    worldPoint: Vertex,
+    screenPoint: { x: number; y: number }
+  ) => {
+    if (!selectedRoom || !dragState.startPoint || !dragState.originalVertices ||
+        !dragState.originalPosition || dragState.originalRotation === undefined ||
+        dragState.originalScale === undefined) return;
+
+    // Check drag threshold
+    if (!dragState.isDragging && dragStartRef.current) {
+      const dx = screenPoint.x - dragStartRef.current.x;
+      const dy = screenPoint.y - dragStartRef.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < DRAG_THRESHOLD) {
+        return;
+      }
+
+      setDragState(prev => ({ ...prev, isDragging: true }));
+      return;
+    }
+
+    // Only update if we're actually dragging
+    if (!dragState.isDragging) return;
+
+    // Calculate delta
+    const deltaX = worldPoint.x - dragState.startPoint.x;
+    const deltaY = worldPoint.y - dragState.startPoint.y;
+
+    // Get the wall to find the vertex indices
+    const wall = selectedRoom.walls[wallIndex];
+    const v1Index = wall.vertexIndex;
+    const v2Index = (wall.vertexIndex + 1) % dragState.originalVertices.length;
+
+    // Transform original vertices to world using ORIGINAL transform, apply delta, transform back
+    const originalV1World = localToWorld(
+      dragState.originalVertices[v1Index],
+      dragState.originalPosition,
+      dragState.originalRotation,
+      dragState.originalScale
+    );
+    const originalV2World = localToWorld(
+      dragState.originalVertices[v2Index],
+      dragState.originalPosition,
+      dragState.originalRotation,
+      dragState.originalScale
+    );
+
+    let newV1World = { x: originalV1World.x + deltaX, y: originalV1World.y + deltaY };
+    let newV2World = { x: originalV2World.x + deltaX, y: originalV2World.y + deltaY };
+
+    // Apply snapping
+    if (gridSnapEnabled) {
+      const snap1 = snapToGrid(newV1World, gridSize);
+      const snap2 = snapToGrid(newV2World, gridSize);
+      if (snap1.position) newV1World = snap1.position;
+      if (snap2.position) newV2World = snap2.position;
+    }
+
+    // Convert back to local using ORIGINAL transform
+    const newV1Local = worldToLocal(newV1World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
+    const newV2Local = worldToLocal(newV2World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
+
+    // Update vertices
+    const newVertices = [...dragState.originalVertices];
+    newVertices[v1Index] = newV1Local;
+    newVertices[v2Index] = newV2Local;
+
+    // Recenter vertices to maintain rotation around centroid
+    const { centeredVertices, localOffset } = recenterVertices(newVertices);
+
+    // Transform local offset to world space using ORIGINAL rotation
+    const cos = Math.cos(dragState.originalRotation);
+    const sin = Math.sin(dragState.originalRotation);
+    const worldOffset = {
+      x: localOffset.x * cos - localOffset.y * sin,
+      y: localOffset.x * sin + localOffset.y * cos
+    };
+
+    // Update position to account for recentering
+    const newPosition = {
+      x: dragState.originalPosition.x + worldOffset.x,
+      y: dragState.originalPosition.y + worldOffset.y
+    };
+
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      dragState.originalVertices // Pass original vertices for matching
+    );
+
+    updateRoom(selectedRoom.id, {
+      vertices: centeredVertices,
+      walls: newWalls,
+      position: newPosition
+    });
+  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom]);
+
+  /**
+   * End wall drag
+   */
+  const endWallDrag = useCallback(() => {
+    setDragState({
+      isDragging: false,
+      dragType: null,
+      startPoint: null,
+      originalVertices: undefined
+    });
+    dragStartRef.current = null;
+  }, []);
 
   /**
    * Delete vertex
@@ -461,8 +654,13 @@ export function useEditMode(
       y: selectedRoom.position.y + worldOffset.y
     };
 
-    // Regenerate walls
-    const newWalls = generateWalls(centeredVertices, selectedRoom.wallThickness);
+    // Regenerate walls (preserve existing wall properties by matching vertex positions)
+    const newWalls = generateWalls(
+      centeredVertices,
+      selectedRoom.wallThickness,
+      selectedRoom.walls,
+      selectedRoom.vertices // Pass original vertices for matching
+    );
 
     updateRoom(selectedRoom.id, {
       vertices: centeredVertices,
@@ -479,6 +677,9 @@ export function useEditMode(
     startEdgeDrag,
     updateEdgeDrag,
     endEdgeDrag,
+    startWallDrag,
+    updateWallDrag,
+    endWallDrag,
     addVertexToEdge,
     addVertexToClosestEdge,
     deleteVertex

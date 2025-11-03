@@ -1,0 +1,1 @@
+export { AfiliadosPage } from './AfiliadosPage';

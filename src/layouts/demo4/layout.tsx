@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { StoreClientTopbar } from '@/pages/store-client/components/common/topbar';
 import { SearchDialog } from '@/partials/dialogs/search/search-dialog';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
-import { Download, MessageSquareDot, Search } from 'lucide-react';
+import { Download, MessageSquareDot, Plus, Search, User, Home } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { MENU_SIDEBAR } from '@/config/menu.config';
@@ -11,6 +11,12 @@ import { useMenu } from '@/hooks/use-menu';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSettings } from '@/providers/settings-provider';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Footer } from './components/footer';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
@@ -58,6 +64,31 @@ export function Demo4Layout() {
                         <StoreClientTopbar />
                       ) : (
                         <>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                mode="icon"
+                                className="hover:bg-primary/10 hover:[&_svg]:text-primary"
+                              >
+                                <Plus className="size-4.5!" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="w-48">
+                              <DropdownMenuItem asChild>
+                                <Link to="/personas/new" className="flex items-center gap-2">
+                                  <User className="size-4" />
+                                  <span>Nueva Persona</span>
+                                </Link>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <Link to="/propiedades/new" className="flex items-center gap-2">
+                                  <Home className="size-4" />
+                                  <span>Nueva Propiedad</span>
+                                </Link>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           <SearchDialog
                             trigger={
                               <Button

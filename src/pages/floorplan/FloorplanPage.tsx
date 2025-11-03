@@ -4,7 +4,9 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useFloorplan } from './hooks/useFloorplan';
+import { useConstraints } from './hooks/useConstraints';
 import { Canvas } from './components/Canvas';
 import { ModeSelectorBar } from './components/ui/ModeSelectorBar';
 import {
@@ -14,12 +16,54 @@ import {
   ZoomPercentage,
   ExportImportButtons
 } from './components/ui/SimpleComponents';
+import { WallPropertiesPanel } from './components/ui/WallPropertiesPanel';
+import { ConstraintToolbar } from './components/ui/ConstraintToolbar';
 import { EditorMode } from './types';
 import { generateWalls } from './utils/walls';
 
+interface LocationState {
+  propertyId?: string;
+  propertyData?: {
+    direccion?: string;
+    numero?: string;
+    piso?: string;
+    ciudad?: string;
+    referenciaCatastral?: string;
+  };
+  returnTo?: string;
+}
+
 export const FloorplanPage: React.FC = () => {
-  const floorplan = useFloorplan();
-  const [showDimensions, setShowDimensions] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const locationState = location.state as LocationState;
+
+  // Get property data from navigation state
+  const propertyId = locationState?.propertyId;
+  const propertyData = locationState?.propertyData;
+  const returnTo = locationState?.returnTo;
+
+  const floorplan = useFloorplan(propertyId); // Pass propertyId to hook
+  const [showDimensions, setShowDimensions] = useState(true); // Show dimensions by default
+
+  // Log property context
+  useEffect(() => {
+    if (propertyId) {
+      console.log('🏗️ FloorplanPage loaded with property context:');
+      console.log('  Property ID:', propertyId);
+      console.log('  Property Data:', propertyData);
+      console.log('  Return To:', returnTo);
+    } else {
+      console.log('🏗️ FloorplanPage loaded without property context (standalone mode)');
+    }
+  }, [propertyId, propertyData, returnTo]);
+
+  // Constraint management hook - NEW: Additive constraint functionality
+  const constraints = useConstraints({
+    rooms: floorplan.rooms,
+    selectedRoomId: floorplan.selection.selection.selectedRoomIds[0] || null,
+    updateRoom: floorplan.updateRoom
+  });
 
   /**
    * Keyboard event handlers
@@ -48,7 +92,8 @@ export const FloorplanPage: React.FC = () => {
           const selectedRoom = floorplan.getSelectedRoom();
           if (selectedRoom && selectedRoom.vertices.length > 3) {
             const newVertices = selectedRoom.vertices.filter((_, i) => i !== floorplan.selection.selection.selectedVertexIndex);
-            const newWalls = generateWalls(newVertices, selectedRoom.wallThickness);
+            // Preserve existing wall properties when regenerating (pass old vertices for matching)
+            const newWalls = generateWalls(newVertices, selectedRoom.wallThickness, selectedRoom.walls, selectedRoom.vertices);
             floorplan.updateRoom(selectedRoom.id, { vertices: newVertices, walls: newWalls });
             floorplan.selection.selectVertex(null as any); // Clear selection
           }
@@ -147,10 +192,89 @@ export const FloorplanPage: React.FC = () => {
     floorplan.viewport.resetViewport();
   };
 
+  // Wall properties panel handlers
+  const handleUpdateWallThickness = (wallIndex: number, thickness: number) => {
+    const selectedRoom = floorplan.getSelectedRoom();
+    if (!selectedRoom) return;
+
+    const updatedWalls = [...selectedRoom.walls];
+    updatedWalls[wallIndex] = {
+      ...updatedWalls[wallIndex],
+      thickness
+    };
+
+    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+  };
+
+  const handleUpdateWallType = (wallIndex: number, wallType: string) => {
+    const selectedRoom = floorplan.getSelectedRoom();
+    if (!selectedRoom) return;
+
+    const updatedWalls = [...selectedRoom.walls];
+    updatedWalls[wallIndex] = {
+      ...updatedWalls[wallIndex],
+      wallType: wallType as any
+    };
+
+    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+  };
+
+  const handleUpdateWallHeight = (wallIndex: number, height: number) => {
+    const selectedRoom = floorplan.getSelectedRoom();
+    if (!selectedRoom) return;
+
+    const updatedWalls = [...selectedRoom.walls];
+    updatedWalls[wallIndex] = {
+      ...updatedWalls[wallIndex],
+      height
+    };
+
+    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+  };
+
+  const handleUpdateWallApertures = (wallIndex: number, apertures: any[]) => {
+    const selectedRoom = floorplan.getSelectedRoom();
+    if (!selectedRoom) return;
+
+    const updatedWalls = [...selectedRoom.walls];
+    updatedWalls[wallIndex] = {
+      ...updatedWalls[wallIndex],
+      apertures
+    };
+
+    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+  };
+
+  const handleCloseWallPanel = () => {
+    floorplan.selection.clearWallSelection();
+  };
+
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gray-50">
       {/* Canvas */}
-      <Canvas floorplan={floorplan} showDimensions={showDimensions} />
+      <Canvas floorplan={floorplan} showDimensions={showDimensions} constraints={constraints} />
+
+      {/* Back Button (Top Left) */}
+      <Link
+        to="/"
+        className="absolute top-4 left-4 z-10 flex items-center justify-center w-10 h-10 bg-white rounded-lg shadow-lg hover:bg-gray-100 transition-colors"
+        title="Back to Home"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="w-6 h-6 text-gray-700"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M10 19l-7-7m0 0l7-7m-7 7h18"
+          />
+        </svg>
+      </Link>
 
       {/* Mode Selector Bar (Top Center) */}
       <ModeSelectorBar
@@ -163,11 +287,15 @@ export const FloorplanPage: React.FC = () => {
         canEdit={floorplan.selection.selection.selectedRoomIds.length > 0}
       />
 
-      {/* Export/Import Buttons (Top Left) */}
-      <ExportImportButtons
-        onExport={floorplan.exportFloorplan}
-        onImport={floorplan.importFloorplan}
-      />
+      {/* Export/Import Buttons (Top Left, below back button) */}
+      <div className="absolute top-16 left-4">
+        <ExportImportButtons
+          onExport={floorplan.exportFloorplan}
+          onImport={floorplan.importFloorplan}
+          onSave={floorplan.saveFloorplan}
+          canSave={!!propertyId}
+        />
+      </div>
 
       {/* Room Info (Top Left, below export/import) */}
       <div className="absolute top-28 left-4">
@@ -194,6 +322,36 @@ export const FloorplanPage: React.FC = () => {
 
       {/* Zoom Percentage (Bottom Right) */}
       <ZoomPercentage zoom={floorplan.viewport.viewport.zoom} />
+
+      {/* Wall Properties Panel (Right Side) - Show when wall is selected in Edit mode */}
+      {floorplan.editorMode === EditorMode.Edit &&
+       floorplan.selection.selection.selectedWallIndex !== null &&
+       floorplan.getSelectedRoom() && (
+        <WallPropertiesPanel
+          room={floorplan.getSelectedRoom()!}
+          wallIndex={floorplan.selection.selection.selectedWallIndex}
+          onUpdateWallThickness={handleUpdateWallThickness}
+          onUpdateWallType={handleUpdateWallType}
+          onUpdateWallHeight={handleUpdateWallHeight}
+          onUpdateWallApertures={handleUpdateWallApertures}
+          onClose={handleCloseWallPanel}
+        />
+      )}
+
+      {/* Constraint Toolbar (Right Side) - NEW: Show in Edit mode when a room is selected */}
+      {floorplan.editorMode === EditorMode.Edit &&
+       floorplan.getSelectedRoom() && (
+        <ConstraintToolbar
+          room={floorplan.getSelectedRoom()!}
+          constraints={constraints}
+          selectedWalls={
+            floorplan.selection.selection.selectedWallIndex !== null
+              ? [floorplan.selection.selection.selectedWallIndex]
+              : []
+          }
+          wallPropertiesPanelOpen={floorplan.selection.selection.selectedWallIndex !== null}
+        />
+      )}
     </div>
   );
 };

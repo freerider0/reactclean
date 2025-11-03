@@ -1,51 +1,41 @@
 import { createContext, useContext } from 'react';
-import { AuthModel, UserModel } from '@/auth/lib/models';
+import type { Session, User } from '@supabase/supabase-js';
 
-// Create AuthContext with types
-export const AuthContext = createContext<{
-  loading: boolean;
-  setLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  auth?: AuthModel;
-  saveAuth: (auth: AuthModel | undefined) => void;
-  user?: UserModel;
-  setUser: React.Dispatch<React.SetStateAction<UserModel | undefined>>;
-  login: (email: string, password: string) => Promise<void>;
-  register: (
-    email: string,
-    password: string,
-    password_confirmation: string,
-    firstName?: string,
-    lastName?: string,
-  ) => Promise<void>;
-  requestPasswordReset: (email: string) => Promise<void>;
-  resetPassword: (
-    password: string,
-    password_confirmation: string,
-  ) => Promise<void>;
-  resendVerificationEmail: (email: string) => Promise<void>;
-  getUser: () => Promise<UserModel | null>;
-  updateProfile: (userData: Partial<UserModel>) => Promise<UserModel>;
-  logout: () => void;
-  verify: () => Promise<void>;
-  isAdmin: boolean;
-}>({
-  loading: false,
-  setLoading: () => {},
-  saveAuth: () => {},
-  setUser: () => {},
-  login: async () => {},
-  register: async () => {},
-  requestPasswordReset: async () => {},
-  resetPassword: async () => {},
-  resendVerificationEmail: async () => {},
-  getUser: async () => null,
-  updateProfile: async () => ({}) as UserModel,
-  logout: () => {},
-  verify: async () => {},
-  isAdmin: false,
+/**
+ * Auth context combining both patterns from official Supabase docs:
+ * 1. State management (session, user, profile, loading)
+ * 2. Auth methods (login, register, logout) - wrapping supabase.auth calls
+ *
+ * This provides a clean API for components while using Supabase directly
+ */
+export type AuthContextType = {
+  // State
+  session: Session | null | undefined;
+  user: User | null | undefined;
+  profile: any | null;
+  isLoading: boolean;
+  isLoggedIn: boolean;
+
+  // Auth methods - wrapping supabase.auth directly
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, metadata?: any) => Promise<void>;
+  signOut: () => Promise<void>;
+  updateProfile: (updates: any) => Promise<void>;
+};
+
+export const AuthContext = createContext<AuthContextType>({
+  session: undefined,
+  user: undefined,
+  profile: undefined,
+  isLoading: true,
+  isLoggedIn: false,
+  signIn: async () => {},
+  signUp: async () => {},
+  signOut: async () => {},
+  updateProfile: async () => {},
 });
 
-// Hook definition
+// Hook to use auth context
 export function useAuth() {
   return useContext(AuthContext);
 }

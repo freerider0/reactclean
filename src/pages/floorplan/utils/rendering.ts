@@ -131,6 +131,10 @@ export function drawWalls(
   options: {
     wallColor?: string;
     selected?: boolean;
+    snapSegmentWorld?: { p1: Vertex; p2: Vertex };  // Centerline segment in world space
+    snapMode?: 'edge-vertex' | 'vertex-only' | 'edge-only';
+    selectedWallIndex?: number | null;  // Wall index that is selected in Edit mode
+    hoverWallIndex?: number | null;  // Wall index that is hovered in Edit mode
   } = {}
 ): void {
   if (room.walls.length === 0) return;
@@ -142,8 +146,57 @@ export function drawWalls(
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
+  // Check if walls should be highlighted (any snap mode)
+  const shouldHighlightWalls = options.snapSegmentWorld !== undefined;
+
+  // Find which wall is closest to the snap segment (if any)
+  let closestWallIndex = -1;
+  if (shouldHighlightWalls && options.snapSegmentWorld) {
+    const snapMid = {
+      x: (options.snapSegmentWorld.p1.x + options.snapSegmentWorld.p2.x) / 2,
+      y: (options.snapSegmentWorld.p1.y + options.snapSegmentWorld.p2.y) / 2
+    };
+
+    let minDist = Infinity;
+
+    room.walls.forEach((wall, wallIndex) => {
+      // Get wall vertices in world space
+      const v1World = localToWorld(room.vertices[wall.vertexIndex], room.position, room.rotation, room.scale);
+      const v2World = localToWorld(room.vertices[(wall.vertexIndex + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+
+      // Calculate wall midpoint
+      const wallMid = {
+        x: (v1World.x + v2World.x) / 2,
+        y: (v1World.y + v2World.y) / 2
+      };
+
+      // Distance between midpoints
+      const dist = Math.sqrt((wallMid.x - snapMid.x) ** 2 + (wallMid.y - snapMid.y) ** 2);
+
+      if (dist < minDist) {
+        minDist = dist;
+        closestWallIndex = wallIndex;
+      }
+    });
+  }
+
+  // Pulsing animation for glow intensity
+  const pulsePhase = (Date.now() % 1000) / 1000;
+  const glowIntensity = 15 + Math.sin(pulsePhase * Math.PI * 2) * 8;
+
   // Draw each wall with proper corner intersections
-  room.walls.forEach(wall => {
+  room.walls.forEach((wall, wallIndex) => {
+    // Check if this is the wall that will snap
+    const isSnapWall = shouldHighlightWalls && wallIndex === closestWallIndex;
+
+    // Check if this wall is selected or hovered (Edit mode)
+    const isSelectedWall = options.selectedWallIndex !== undefined &&
+                           options.selectedWallIndex !== null &&
+                           wallIndex === options.selectedWallIndex;
+    const isHoverWall = options.hoverWallIndex !== undefined &&
+                        options.hoverWallIndex !== null &&
+                        wallIndex === options.hoverWallIndex;
+
     // Get wall quad vertices with mitered corners
     const [inner1, inner2, outer2, outer1] = getWallQuad(wall, worldVertices);
 
@@ -153,8 +206,29 @@ export function drawWalls(
     const screenOuter2 = worldToScreen(outer2, viewport);
     const screenOuter1 = worldToScreen(outer1, viewport);
 
+    // Apply colors and effects based on state
+    if (isSelectedWall) {
+      // Selected wall in Edit mode - blue with glow
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = '#3b82f6';
+      ctx.fillStyle = '#3b82f6'; // Blue
+    } else if (isHoverWall) {
+      // Hover wall in Edit mode - light blue with glow
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = '#60a5fa';
+      ctx.fillStyle = '#60a5fa'; // Light blue
+    } else if (isSnapWall) {
+      // Wall that will snap in Assembly mode - orange with pulsing glow
+      ctx.shadowBlur = glowIntensity;
+      ctx.shadowColor = '#f59e0b';
+      ctx.fillStyle = '#f59e0b'; // Orange
+    } else {
+      // Normal wall
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = options.wallColor || '#94a3b8'; // Slate gray
+    }
+
     // Draw wall as filled quad
-    ctx.fillStyle = options.wallColor || '#94a3b8'; // Slate gray
     ctx.beginPath();
     ctx.moveTo(screenInner1.x, screenInner1.y);
     ctx.lineTo(screenInner2.x, screenInner2.y);
@@ -167,6 +241,111 @@ export function drawWalls(
     ctx.strokeStyle = options.selected ? '#3b82f6' : '#64748b';
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // Draw apertures (doors and windows) if any
+    if (wall.apertures && wall.apertures.length > 0) {
+      // Calculate wall direction along inner edge
+      const wallDx = inner2.x - inner1.x;
+      const wallDy = inner2.y - inner1.y;
+      const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+      if (wallLength > 0) {
+        // Unit vector along wall
+        const unitX = wallDx / wallLength;
+        const unitY = wallDy / wallLength;
+
+        // Perpendicular vector pointing outward
+        const perpX = unitY;
+        const perpY = -unitX;
+
+        ctx.save();
+        ctx.shadowBlur = 0; // No shadow for apertures
+
+        for (const aperture of wall.apertures) {
+          // Convert aperture width from meters to pixels (1m = 100px)
+          const apertureWidthPx = aperture.width * 100;
+
+          // Calculate aperture position along wall
+          let startDist: number;
+          if (aperture.anchorVertex === 'end') {
+            startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+          } else {
+            startDist = aperture.distance * 100;
+          }
+          const endDist = startDist + apertureWidthPx;
+
+          // Aperture corners on inner edge
+          const innerApertureStart = {
+            x: inner1.x + unitX * startDist,
+            y: inner1.y + unitY * startDist
+          };
+          const innerApertureEnd = {
+            x: inner1.x + unitX * endDist,
+            y: inner1.y + unitY * endDist
+          };
+
+          // Aperture corners on outer edge
+          const outerApertureStart = {
+            x: innerApertureStart.x + perpX * wall.thickness,
+            y: innerApertureStart.y + perpY * wall.thickness
+          };
+          const outerApertureEnd = {
+            x: innerApertureEnd.x + perpX * wall.thickness,
+            y: innerApertureEnd.y + perpY * wall.thickness
+          };
+
+          // Transform to screen coordinates
+          const screenInnerApertureStart = worldToScreen(innerApertureStart, viewport);
+          const screenInnerApertureEnd = worldToScreen(innerApertureEnd, viewport);
+          const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
+          const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
+
+          // Draw aperture as white rectangle (creates opening)
+          ctx.fillStyle = '#FFFFFF';
+          ctx.globalAlpha = 1;
+
+          ctx.beginPath();
+          ctx.moveTo(screenInnerApertureStart.x, screenInnerApertureStart.y);
+          ctx.lineTo(screenInnerApertureEnd.x, screenInnerApertureEnd.y);
+          ctx.lineTo(screenOuterApertureEnd.x, screenOuterApertureEnd.y);
+          ctx.lineTo(screenOuterApertureStart.x, screenOuterApertureStart.y);
+          ctx.closePath();
+          ctx.fill();
+
+          // Draw door arc if it's a door
+          if (aperture.type === 'door') {
+            ctx.strokeStyle = '#666666';
+            ctx.lineWidth = 1 / viewport.zoom;
+            ctx.globalAlpha = 0.5;
+
+            const arcRadius = apertureWidthPx * viewport.zoom;
+            const baseAngle = Math.atan2(perpY, perpX);
+
+            ctx.beginPath();
+            ctx.arc(
+              screenInnerApertureStart.x,
+              screenInnerApertureStart.y,
+              arcRadius,
+              baseAngle - Math.PI / 2,
+              baseAngle,
+              false
+            );
+            ctx.stroke();
+
+            // Draw door panel line
+            ctx.beginPath();
+            ctx.moveTo(screenInnerApertureStart.x, screenInnerApertureStart.y);
+            ctx.lineTo(
+              screenInnerApertureStart.x + Math.cos(baseAngle - Math.PI / 4) * arcRadius,
+              screenInnerApertureStart.y + Math.sin(baseAngle - Math.PI / 4) * arcRadius
+            );
+            ctx.stroke();
+          }
+        }
+
+        ctx.restore();
+      }
+    }
   });
 
   ctx.restore();
@@ -417,7 +596,8 @@ export function drawRotationHandle(
 }
 
 /**
- * Draw dimension labels on room edges
+ * Draw architectural dimension lines on room edges
+ * Copied from original DimensionRenderer.ts with proper extension lines and arrows
  */
 export function drawDimensionLabels(
   ctx: CanvasRenderingContext2D,
@@ -426,10 +606,16 @@ export function drawDimensionLabels(
   options: {
     selected?: boolean;
     offsetDistance?: number;
+    onRegisterLabel?: (label: {
+      roomId: string;
+      edgeIndex: number;
+      position: { x: number; y: number };
+      bounds: { x: number; y: number; width: number; height: number };
+      currentValue: number;
+      wallVertices: [Vertex, Vertex];
+    }) => void;
   } = {}
 ): void {
-  const offsetDistance = options.offsetDistance || 20;
-
   ctx.save();
 
   // Transform vertices to world coordinates
@@ -437,67 +623,214 @@ export function drawDimensionLabels(
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
-  // Draw label for each edge
+  // Configuration (matching original DimensionRenderer)
+  const EXTENSION_LINE_OFFSET = 10;
+  const DIMENSION_LINE_BASE_OFFSET = 30;
+  const EXTENSION_LINE_OVERSHOOT = 10;
+  const ARROW_LENGTH = 10;
+  const ARROW_WIDTH = 3;
+  const TEXT_PADDING = 8;
+
+  // Calculate centroid for outward direction
+  let centroidX = 0, centroidY = 0;
+  for (const v of worldVertices) {
+    centroidX += v.x;
+    centroidY += v.y;
+  }
+  centroidX /= worldVertices.length;
+  centroidY /= worldVertices.length;
+
+  // Draw dimension for each edge
   for (let i = 0; i < worldVertices.length; i++) {
     const v1 = worldVertices[i];
     const v2 = worldVertices[(i + 1) % worldVertices.length];
 
     // Calculate edge length
-    const length = calculateEdgeLength(v1, v2);
-    const labelText = formatDistance(length);
+    const lengthCm = Math.sqrt((v2.x - v1.x) ** 2 + (v2.y - v1.y) ** 2);
+    const lengthM = lengthCm / 100;
 
-    // Calculate midpoint
-    const midpoint = calculateMidpoint(v1, v2);
+    // Skip very small edges
+    if (lengthCm < 10) continue;
 
-    // Calculate offset direction (perpendicular to edge)
-    const offset = calculateLabelOffset(v1, v2);
+    // Format dimension text
+    const text = lengthM < 10 ? `${lengthM.toFixed(2)}m` : `${lengthM.toFixed(1)}m`;
 
-    // Apply offset to position label outside the room
-    const labelPosition = {
-      x: midpoint.x + offset.x * offsetDistance,
-      y: midpoint.y + offset.y * offsetDistance
-    };
+    // Check for constraints on this edge
+    let constraintIcons = '';
+    if (room.constraints) {
+      const hasHorizontal = room.constraints.some(c =>
+        c.enabled && c.type === 'horizontal' &&
+        c.indices.length === 2 &&
+        ((c.indices[0] === i && c.indices[1] === (i + 1) % worldVertices.length) ||
+         (c.indices[1] === i && c.indices[0] === (i + 1) % worldVertices.length))
+      );
+      const hasVertical = room.constraints.some(c =>
+        c.enabled && c.type === 'vertical' &&
+        c.indices.length === 2 &&
+        ((c.indices[0] === i && c.indices[1] === (i + 1) % worldVertices.length) ||
+         (c.indices[1] === i && c.indices[0] === (i + 1) % worldVertices.length))
+      );
+      const hasDistance = room.constraints.some(c =>
+        c.enabled && c.type === 'distance' &&
+        c.indices.length === 2 &&
+        ((c.indices[0] === i && c.indices[1] === (i + 1) % worldVertices.length) ||
+         (c.indices[1] === i && c.indices[0] === (i + 1) % worldVertices.length))
+      );
 
-    // Transform to screen coordinates
-    const screenPos = worldToScreen(labelPosition, viewport);
+      if (hasHorizontal) constraintIcons += ' [H]';
+      if (hasVertical) constraintIcons += ' [V]';
+      if (hasDistance) constraintIcons += ' 🔒';
+    }
 
-    // Draw background rectangle
-    ctx.font = '12px sans-serif';
-    const textMetrics = ctx.measureText(labelText);
-    const padding = 4;
-    const bgWidth = textMetrics.width + padding * 2;
-    const bgHeight = 16 + padding * 2;
+    const displayText = text + constraintIcons;
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.fillRect(
-      screenPos.x - bgWidth / 2,
-      screenPos.y - bgHeight / 2,
-      bgWidth,
-      bgHeight
+    // Calculate wall angle and perpendicular
+    const dx = v2.x - v1.x;
+    const dy = v2.y - v1.y;
+    const wallAngle = Math.atan2(dy, dx);
+    const perpAngle = wallAngle + Math.PI / 2;
+
+    // Determine outward direction
+    const midX = (v1.x + v2.x) / 2;
+    const midY = (v1.y + v2.y) / 2;
+    const outwardX = midX - centroidX;
+    const outwardY = midY - centroidY;
+    const perpX = -dy;
+    const perpY = dx;
+    const dotProduct = perpX * outwardX + perpY * outwardY;
+    const outwardDirection = dotProduct > 0 ? 1 : -1;
+
+    // Get wall thickness
+    const wallThickness = room.walls[i]?.thickness || room.wallThickness || 10;
+    const totalOffsetWorld = wallThickness + DIMENSION_LINE_BASE_OFFSET;
+    const totalOffset = totalOffsetWorld * viewport.zoom;
+
+    // Calculate offset
+    const offsetX = Math.cos(perpAngle) * totalOffset * outwardDirection;
+    const offsetY = Math.sin(perpAngle) * totalOffset * outwardDirection;
+
+    // Extension line positions
+    const ext1Start = worldToScreen(v1, viewport);
+    const ext2Start = worldToScreen(v2, viewport);
+
+    const ext1EndX = ext1Start.x + offsetX + Math.cos(perpAngle) * EXTENSION_LINE_OVERSHOOT * outwardDirection;
+    const ext1EndY = ext1Start.y + offsetY + Math.sin(perpAngle) * EXTENSION_LINE_OVERSHOOT * outwardDirection;
+    const ext2EndX = ext2Start.x + offsetX + Math.cos(perpAngle) * EXTENSION_LINE_OVERSHOOT * outwardDirection;
+    const ext2EndY = ext2Start.y + offsetY + Math.sin(perpAngle) * EXTENSION_LINE_OVERSHOOT * outwardDirection;
+
+    // Dimension line endpoints
+    const dim1X = ext1Start.x + offsetX;
+    const dim1Y = ext1Start.y + offsetY;
+    const dim2X = ext2Start.x + offsetX;
+    const dim2Y = ext2Start.y + offsetY;
+
+    // Draw extension lines
+    ctx.strokeStyle = '#6b7280';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(
+      ext1Start.x + Math.cos(perpAngle) * EXTENSION_LINE_OFFSET * outwardDirection,
+      ext1Start.y + Math.sin(perpAngle) * EXTENSION_LINE_OFFSET * outwardDirection
     );
+    ctx.lineTo(ext1EndX, ext1EndY);
+    ctx.stroke();
 
-    // Draw border
-    ctx.strokeStyle = options.selected ? '#3b82f6' : '#cbd5e1';
+    ctx.beginPath();
+    ctx.moveTo(
+      ext2Start.x + Math.cos(perpAngle) * EXTENSION_LINE_OFFSET * outwardDirection,
+      ext2Start.y + Math.sin(perpAngle) * EXTENSION_LINE_OFFSET * outwardDirection
+    );
+    ctx.lineTo(ext2EndX, ext2EndY);
+    ctx.stroke();
+
+    // Draw dimension line
+    ctx.strokeStyle = '#374151';
     ctx.lineWidth = 1;
-    ctx.strokeRect(
-      screenPos.x - bgWidth / 2,
-      screenPos.y - bgHeight / 2,
-      bgWidth,
-      bgHeight
-    );
+    ctx.beginPath();
+    ctx.moveTo(dim1X, dim1Y);
+    ctx.lineTo(dim2X, dim2Y);
+    ctx.stroke();
+
+    // Draw arrows
+    ctx.fillStyle = '#374151';
+    const drawArrow = (x: number, y: number, direction: number) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(wallAngle + direction);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-ARROW_LENGTH, -ARROW_WIDTH);
+      ctx.lineTo(-ARROW_LENGTH, ARROW_WIDTH);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+    drawArrow(dim1X, dim1Y, 0);
+    drawArrow(dim2X, dim2Y, Math.PI);
 
     // Draw text
-    ctx.fillStyle = options.selected ? '#3b82f6' : '#475569';
+    const textCenterX = (dim1X + dim2X) / 2;
+    const textCenterY = (dim1Y + dim2Y) / 2;
+
+    // Calculate readable text angle
+    let textAngle = wallAngle;
+    const degrees = (wallAngle * 180 / Math.PI + 360) % 360;
+    if (degrees > 90 && degrees < 270) {
+      textAngle = wallAngle + Math.PI;
+    }
+
+    ctx.save();
+    ctx.translate(textCenterX, textCenterY);
+    ctx.rotate(textAngle);
+
+    // Measure text
+    ctx.font = 'bold 14px Arial, sans-serif';
+    const textMetrics = ctx.measureText(displayText);
+    const textWidth = textMetrics.width;
+    const textHeight = 14;
+
+    const isFlipped = degrees > 90 && degrees < 270;
+    const textOffsetY = isFlipped ? TEXT_PADDING : -TEXT_PADDING;
+
+    // Draw text background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillRect(-textWidth / 2 - 4, textOffsetY - textHeight / 2 - 2, textWidth + 8, textHeight + 4);
+
+    // Draw text
+    ctx.fillStyle = constraintIcons ? '#dc2626' : '#1f2937';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(labelText, screenPos.x, screenPos.y);
+    ctx.fillText(displayText, 0, textOffsetY);
+
+    ctx.restore();
+
+    // Register this dimension label for click detection
+    if (options.onRegisterLabel) {
+      // Calculate actual text bounds in screen coordinates
+      const actualTextX = textCenterX - Math.sin(textAngle) * textOffsetY;
+      const actualTextY = textCenterY + Math.cos(textAngle) * textOffsetY;
+
+      options.onRegisterLabel({
+        roomId: room.id,
+        edgeIndex: i,
+        position: { x: actualTextX, y: actualTextY },
+        bounds: {
+          x: actualTextX - textWidth / 2 - 4,
+          y: actualTextY - textHeight / 2 - 2,
+          width: textWidth + 8,
+          height: textHeight + 4
+        },
+        currentValue: lengthCm,
+        wallVertices: [v1, v2]
+      });
+    }
   }
 
   ctx.restore();
 }
 
 /**
- * Draw room joining snap indicators
+ * Draw room joining snap indicators (only vertex pulsing)
  */
 export function drawRoomSnapIndicators(
   ctx: CanvasRenderingContext2D,
@@ -508,80 +841,38 @@ export function drawRoomSnapIndicators(
 
   ctx.save();
 
-  const { closestMovingSegment, closestStationarySegment, closestMovingVertex, closestStationaryVertex } = snapResult.debugInfo;
+  const { closestMovingVertex, closestStationaryVertex } = snapResult.debugInfo;
 
-  // Draw closest edge segments (wall centerlines)
-  if (closestMovingSegment && closestStationarySegment) {
-    // Stationary segment (magenta/pink)
-    const statStart = worldToScreen(closestStationarySegment.p1, viewport);
-    const statEnd = worldToScreen(closestStationarySegment.p2, viewport);
-
-    ctx.strokeStyle = '#ec4899'; // Pink for stationary
-    ctx.lineWidth = 3;
-    ctx.setLineDash([10, 5]);
-    ctx.beginPath();
-    ctx.moveTo(statStart.x, statStart.y);
-    ctx.lineTo(statEnd.x, statEnd.y);
-    ctx.stroke();
-
-    // Moving segment (cyan/blue)
-    const movStart = worldToScreen(closestMovingSegment.p1, viewport);
-    const movEnd = worldToScreen(closestMovingSegment.p2, viewport);
-
-    ctx.strokeStyle = '#06b6d4'; // Cyan for moving
-    ctx.lineWidth = 3;
-    ctx.setLineDash([10, 5]);
-    ctx.beginPath();
-    ctx.moveTo(movStart.x, movStart.y);
-    ctx.lineTo(movEnd.x, movEnd.y);
-    ctx.stroke();
-  }
-
-  // Draw closest vertices (if within threshold)
+  // Draw pulsing vertex indicators (always show when vertices will snap)
   if (closestMovingVertex && closestStationaryVertex) {
-    // Stationary vertex
     const statVertex = worldToScreen(closestStationaryVertex, viewport);
-    ctx.fillStyle = 'rgba(236, 72, 153, 0.5)'; // Semi-transparent pink
-    ctx.strokeStyle = '#ec4899';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([]);
+    const movVertex = worldToScreen(closestMovingVertex, viewport);
+
+    // Pulsing animation
+    const pulsePhase = (Date.now() % 1000) / 1000;
+    const pulseSize = 8 + Math.sin(pulsePhase * Math.PI * 2) * 4;
+    const pulseAlpha = 0.6 + Math.sin(pulsePhase * Math.PI * 2) * 0.3;
+
+    // Stationary vertex
+    ctx.fillStyle = `rgba(16, 185, 129, ${pulseAlpha})`;
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = '#10b981';
     ctx.beginPath();
-    ctx.arc(statVertex.x, statVertex.y, 12, 0, Math.PI * 2);
+    ctx.arc(statVertex.x, statVertex.y, pulseSize, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
     // Moving vertex
-    const movVertex = worldToScreen(closestMovingVertex, viewport);
-    ctx.fillStyle = 'rgba(6, 182, 212, 0.5)'; // Semi-transparent cyan
-    ctx.strokeStyle = '#06b6d4';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(16, 185, 129, ${pulseAlpha})`;
+    ctx.strokeStyle = '#10b981';
     ctx.beginPath();
-    ctx.arc(movVertex.x, movVertex.y, 12, 0, Math.PI * 2);
+    ctx.arc(movVertex.x, movVertex.y, pulseSize, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Draw connection line between vertices
-    ctx.strokeStyle = '#10b981'; // Green connecting line
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(statVertex.x, statVertex.y);
-    ctx.lineTo(movVertex.x, movVertex.y);
-    ctx.stroke();
-  }
-
-  // Draw snap mode label
-  if (snapResult.mode) {
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 3;
-    const modeText = snapResult.mode.toUpperCase();
-    const textX = 10;
-    const textY = 30;
-    ctx.strokeText(modeText, textX, textY);
-    ctx.fillText(modeText, textX, textY);
+    ctx.shadowBlur = 0;
   }
 
   ctx.restore();
@@ -596,4 +887,265 @@ export function clearCanvas(
   height: number
 ): void {
   ctx.clearRect(0, 0, width, height);
+}
+
+/**
+ * Draw constraint indicators on a room
+ * NEW - Additive function for constraint visualization
+ */
+export function drawConstraintIndicators(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport
+): void {
+  if (!room.constraints || room.constraints.length === 0) return;
+
+  ctx.save();
+
+  // Transform vertices to world coordinates
+  const worldVertices = room.vertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  room.constraints.forEach((constraint) => {
+    if (!constraint.enabled) return;
+
+    const { type, indices } = constraint;
+
+    // Draw based on constraint type
+    switch (type) {
+      case 'distance': {
+        // Distance constraint - draw line between vertices with measurement
+        if (indices.length !== 2) return;
+        const v1 = worldVertices[indices[0]];
+        const v2 = worldVertices[indices[1]];
+        const sv1 = worldToScreen(v1, viewport);
+        const sv2 = worldToScreen(v2, viewport);
+
+        // Draw constraint line
+        ctx.strokeStyle = '#10b981'; // Green
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sv1.x, sv1.y);
+        ctx.lineTo(sv2.x, sv2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw measurement badge
+        const midX = (sv1.x + sv2.x) / 2;
+        const midY = (sv1.y + sv2.y) / 2;
+        const distance = constraint.value?.toFixed(1) || '';
+
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 11px sans-serif';
+        const text = `${distance}cm`;
+        const metrics = ctx.measureText(text);
+        const padding = 3;
+
+        ctx.fillRect(
+          midX - metrics.width / 2 - padding,
+          midY - 8,
+          metrics.width + padding * 2,
+          16
+        );
+
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, midX, midY);
+        break;
+      }
+
+      case 'horizontal': {
+        // Horizontal constraint - draw horizontal indicator
+        if (indices.length !== 2) return;
+        const v1 = worldVertices[indices[0]];
+        const v2 = worldVertices[indices[1]];
+        const sv1 = worldToScreen(v1, viewport);
+        const sv2 = worldToScreen(v2, viewport);
+
+        // Draw horizontal line
+        ctx.strokeStyle = '#3b82f6'; // Blue
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sv1.x, sv1.y);
+        ctx.lineTo(sv2.x, sv2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw H badge
+        const midX = (sv1.x + sv2.x) / 2;
+        const midY = (sv1.y + sv2.y) / 2;
+
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(midX, midY, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('H', midX, midY);
+        break;
+      }
+
+      case 'vertical': {
+        // Vertical constraint - draw vertical indicator
+        if (indices.length !== 2) return;
+        const v1 = worldVertices[indices[0]];
+        const v2 = worldVertices[indices[1]];
+        const sv1 = worldToScreen(v1, viewport);
+        const sv2 = worldToScreen(v2, viewport);
+
+        // Draw vertical line
+        ctx.strokeStyle = '#6366f1'; // Indigo
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sv1.x, sv1.y);
+        ctx.lineTo(sv2.x, sv2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw V badge
+        const midX = (sv1.x + sv2.x) / 2;
+        const midY = (sv1.y + sv2.y) / 2;
+
+        ctx.fillStyle = '#6366f1';
+        ctx.beginPath();
+        ctx.arc(midX, midY, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('V', midX, midY);
+        break;
+      }
+
+      case 'parallel': {
+        // Parallel constraint - draw parallel indicator on edges
+        if (indices.length !== 2) return;
+        const edge1Idx = indices[0];
+        const edge2Idx = indices[1];
+
+        // Get edge midpoints
+        const e1v1 = worldVertices[edge1Idx];
+        const e1v2 = worldVertices[(edge1Idx + 1) % worldVertices.length];
+        const e2v1 = worldVertices[edge2Idx];
+        const e2v2 = worldVertices[(edge2Idx + 1) % worldVertices.length];
+
+        const e1Mid = { x: (e1v1.x + e1v2.x) / 2, y: (e1v1.y + e1v2.y) / 2 };
+        const e2Mid = { x: (e2v1.x + e2v2.x) / 2, y: (e2v1.y + e2v2.y) / 2 };
+
+        const se1Mid = worldToScreen(e1Mid, viewport);
+        const se2Mid = worldToScreen(e2Mid, viewport);
+
+        // Draw parallel symbol on both edges
+        ctx.fillStyle = '#a855f7'; // Purple
+        ctx.beginPath();
+        ctx.arc(se1Mid.x, se1Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(se2Mid.x, se2Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        // Draw parallel lines symbol
+        ctx.beginPath();
+        ctx.moveTo(se1Mid.x - 4, se1Mid.y - 4);
+        ctx.lineTo(se1Mid.x + 4, se1Mid.y + 4);
+        ctx.moveTo(se1Mid.x - 4, se1Mid.y + 1);
+        ctx.lineTo(se1Mid.x + 4, se1Mid.y + 9);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(se2Mid.x - 4, se2Mid.y - 4);
+        ctx.lineTo(se2Mid.x + 4, se2Mid.y + 4);
+        ctx.moveTo(se2Mid.x - 4, se2Mid.y + 1);
+        ctx.lineTo(se2Mid.x + 4, se2Mid.y + 9);
+        ctx.stroke();
+        break;
+      }
+
+      case 'perpendicular': {
+        // Perpendicular constraint - draw perpendicular indicator
+        if (indices.length !== 2) return;
+        const edge1Idx = indices[0];
+        const edge2Idx = indices[1];
+
+        // Get edge midpoints
+        const e1v1 = worldVertices[edge1Idx];
+        const e1v2 = worldVertices[(edge1Idx + 1) % worldVertices.length];
+        const e2v1 = worldVertices[edge2Idx];
+        const e2v2 = worldVertices[(edge2Idx + 1) % worldVertices.length];
+
+        const e1Mid = { x: (e1v1.x + e1v2.x) / 2, y: (e1v1.y + e1v2.y) / 2 };
+        const e2Mid = { x: (e2v1.x + e2v2.x) / 2, y: (e2v1.y + e2v2.y) / 2 };
+
+        const se1Mid = worldToScreen(e1Mid, viewport);
+        const se2Mid = worldToScreen(e2Mid, viewport);
+
+        // Draw perpendicular symbol (⊥)
+        ctx.fillStyle = '#f59e0b'; // Amber
+        ctx.beginPath();
+        ctx.arc(se1Mid.x, se1Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(se2Mid.x, se2Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⊥', se1Mid.x, se1Mid.y);
+        ctx.fillText('⊥', se2Mid.x, se2Mid.y);
+        break;
+      }
+
+      case 'equal': {
+        // Equal length constraint
+        if (indices.length !== 2) return;
+        const edge1Idx = indices[0];
+        const edge2Idx = indices[1];
+
+        // Get edge midpoints
+        const e1v1 = worldVertices[edge1Idx];
+        const e1v2 = worldVertices[(edge1Idx + 1) % worldVertices.length];
+        const e2v1 = worldVertices[edge2Idx];
+        const e2v2 = worldVertices[(edge2Idx + 1) % worldVertices.length];
+
+        const e1Mid = { x: (e1v1.x + e1v2.x) / 2, y: (e1v1.y + e1v2.y) / 2 };
+        const e2Mid = { x: (e2v1.x + e2v2.x) / 2, y: (e2v1.y + e2v2.y) / 2 };
+
+        const se1Mid = worldToScreen(e1Mid, viewport);
+        const se2Mid = worldToScreen(e2Mid, viewport);
+
+        // Draw equals symbol
+        ctx.fillStyle = '#ec4899'; // Pink
+        ctx.beginPath();
+        ctx.arc(se1Mid.x, se1Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(se2Mid.x, se2Mid.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('=', se1Mid.x, se1Mid.y);
+        ctx.fillText('=', se2Mid.x, se2Mid.y);
+        break;
+      }
+    }
+  });
+
+  ctx.restore();
 }

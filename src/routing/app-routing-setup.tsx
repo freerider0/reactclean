@@ -94,6 +94,29 @@ import {
   WishlistPage,
 } from '@/pages/store-client';
 import { FloorplanPage } from '@/pages/floorplan';
+import { MediaGalleryPage } from '@/pages/media-gallery';
+import { OCRScannerPage } from '@/pages/ocr-scanner';
+import { MapaCatastroPage } from '@/pages/catastro/MapaCatastroPage';
+import { NuevaPersonaPage } from '@/pages/personas/nueva-persona';
+import { NuevaPersonaCompactoPage } from '@/pages/personas/nueva-persona-compacto';
+import {
+  PropiedadesPage,
+  PropiedadDetallesPage,
+  NuevaPropiedadPage,
+  MapaPropiedadesPage,
+  GaleriaPage,
+  DocumentosPage,
+  TiposPropiedadPage,
+} from '@/pages/propiedades';
+import {
+  FacturasPage,
+  NuevaFacturaPage,
+  PendientesPage,
+  IngresosPage,
+  ReportesPage,
+  PlantillasPage,
+} from '@/pages/facturas';
+import { AfiliadosPage } from '@/pages/afiliados';
 import { Navigate, Route, Routes } from 'react-router';
 
 export function AppRoutingSetup() {
@@ -103,7 +126,34 @@ export function AppRoutingSetup() {
         {/* Floorplan route without layout */}
         <Route path="/floorplan" element={<FloorplanPage />} />
 
+        {/* Catastro map route without layout (full-screen) */}
+        <Route path="/catastro/mapa" element={<MapaCatastroPage />} />
+
         <Route element={<Demo4Layout />}>
+          {/* Media Gallery */}
+          <Route path="/media-gallery" element={<MediaGalleryPage />} />
+          {/* OCR Scanner */}
+          <Route path="/ocr-scanner" element={<OCRScannerPage />} />
+          {/* Personas */}
+          <Route path="/personas/new" element={<NuevaPersonaPage />} />
+          <Route path="/personas/new-compacto" element={<NuevaPersonaCompactoPage />} />
+          {/* Propiedades */}
+          <Route path="/propiedades" element={<PropiedadesPage />} />
+          <Route path="/propiedades/new" element={<NuevaPropiedadPage />} />
+          <Route path="/propiedades/:id" element={<PropiedadDetallesPage />} />
+          <Route path="/propiedades/mapa" element={<MapaPropiedadesPage />} />
+          <Route path="/propiedades/galeria" element={<GaleriaPage />} />
+          <Route path="/propiedades/documentos" element={<DocumentosPage />} />
+          <Route path="/propiedades/tipos" element={<TiposPropiedadPage />} />
+          {/* Facturas */}
+          <Route path="/facturas" element={<FacturasPage />} />
+          <Route path="/facturas/new" element={<NuevaFacturaPage />} />
+          <Route path="/facturas/pendientes" element={<PendientesPage />} />
+          <Route path="/facturas/ingresos" element={<IngresosPage />} />
+          <Route path="/facturas/reportes" element={<ReportesPage />} />
+          <Route path="/facturas/plantillas" element={<PlantillasPage />} />
+          {/* Afiliados */}
+          <Route path="/afiliados" element={<AfiliadosPage />} />
           <Route path="/" element={<DefaultPage />} />
           <Route path="/dark-sidebar" element={<Demo1DarkSidebarPage />} />
           <Route

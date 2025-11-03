@@ -17,11 +17,13 @@ import {
   drawEdgeHandles,
   drawRotationHandle,
   drawDimensionLabels,
-  drawRoomSnapIndicators
+  drawRoomSnapIndicators,
+  drawConstraintIndicators
 } from '../utils/rendering';
 import {
   hitTestRoomVertices,
   hitTestRoomEdges,
+  hitTestRoomWalls,
   hitTestRoom,
   findBestHit,
   hitTestRotationHandle
@@ -30,13 +32,17 @@ import { polygonIntersectsRectangle } from '../utils/geometry';
 import { useFloorplan } from '../hooks/useFloorplan';
 import { useEditMode } from '../hooks/useEditMode';
 import { useAssemblyMode } from '../hooks/useAssemblyMode';
+import { useEditableDimensions } from '../hooks/useEditableDimensions';
+import { UseConstraintsResult } from '../hooks/useConstraints';
+import { DimensionInput } from './ui/DimensionInput';
 
 interface CanvasProps {
   floorplan: ReturnType<typeof useFloorplan>;
   showDimensions?: boolean;
+  constraints?: UseConstraintsResult;
 }
 
-export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = false }) => {
+export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = false, constraints }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number>();
 
@@ -50,7 +56,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     drawing,
     selection,
     updateRoom,
-    getSelectedRoom
+    getSelectedRoom,
+    enterEditMode,
+    enterAssemblyMode
   } = floorplan;
 
   // Selection rectangle state
@@ -76,6 +84,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     gridConfig.size,
     true // roomJoiningEnabled
   );
+
+  // Editable dimensions hook
+  const editableDimensions = useEditableDimensions();
 
   /**
    * Setup canvas size and DPI scaling
@@ -120,6 +131,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     // Clear canvas
     clearCanvas(ctx, rect.width, rect.height);
 
+    // Clear dimension labels at start of render
+    editableDimensions.clearDimensionLabels();
+
     // Draw grid
     drawGrid(ctx, viewport.viewport, gridConfig, rect.width, rect.height);
 
@@ -127,6 +141,24 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     rooms.forEach(room => {
       const isSelected = selection.isRoomSelected(room.id);
       const isHover = selection.selection.hoverRoomId === room.id;
+
+      // Check if this room is involved in snapping (any wall that will snap turns orange)
+      let snapSegmentWorld: { p1: Vertex; p2: Vertex } | undefined;
+      let snapMode: 'edge-vertex' | 'vertex-only' | 'edge-only' | undefined;
+
+      if (editorMode === EditorMode.Assembly && assemblyMode.lastSnapResult?.snapped) {
+        const snapResult = assemblyMode.lastSnapResult;
+        // Highlight walls that will snap for both edge-vertex and edge-only modes
+        if (snapResult.mode === 'edge-vertex' || snapResult.mode === 'edge-only') {
+          if (room.id === snapResult.movingRoomId) {
+            snapSegmentWorld = snapResult.movingSegmentWorld;
+            snapMode = snapResult.mode;
+          } else if (room.id === snapResult.stationaryRoomId) {
+            snapSegmentWorld = snapResult.stationarySegmentWorld;
+            snapMode = snapResult.mode;
+          }
+        }
+      }
 
       // Draw room floor
       drawRoom(ctx, room, viewport.viewport, {
@@ -136,14 +168,24 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
       // Draw walls
       drawWalls(ctx, room, viewport.viewport, {
-        selected: isSelected
+        selected: isSelected,
+        snapSegmentWorld,
+        snapMode,
+        selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
+        hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
       });
 
       // Draw dimension labels if enabled
       if (showDimensions) {
         drawDimensionLabels(ctx, room, viewport.viewport, {
-          selected: isSelected
+          selected: isSelected,
+          onRegisterLabel: editableDimensions.registerDimensionLabel
         });
+      }
+
+      // Draw constraint indicators (in edit mode) - NEW: Additive constraint visualization
+      if (editorMode === EditorMode.Edit && isSelected) {
+        drawConstraintIndicators(ctx, room, viewport.viewport);
       }
     });
 
@@ -235,7 +277,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         });
       }
     }
-  }, [rooms, editorMode, gridConfig, viewport.viewport.x, viewport.viewport.y, viewport.viewport.zoom, drawing.drawingState, selection, floorplan, assemblyMode.dragState.dragType, assemblyMode.assemblyGuideLines, assemblyMode.lastSnapResult, selectionRectangle, showDimensions]);
+  }, [rooms, editorMode, gridConfig, viewport.viewport.x, viewport.viewport.y, viewport.viewport.zoom, drawing.drawingState, selection, floorplan, assemblyMode.dragState.dragType, assemblyMode.assemblyGuideLines, assemblyMode.lastSnapResult, selectionRectangle, showDimensions, editableDimensions]);
 
   /**
    * Animation loop
@@ -256,8 +298,44 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
   }, [render]);
 
   /**
-   * Double click handler - add vertex at click position
-   * (Adapted from original UnifiedInputHandler.ts:169)
+   * Handle dimension editing submission
+   */
+  const handleDimensionSubmit = useCallback((newValueCm: number) => {
+    if (!editableDimensions.editingDimension || !constraints) {
+      editableDimensions.cancelEditingDimension();
+      return;
+    }
+
+    const { roomId, edgeIndex } = editableDimensions.editingDimension;
+
+    // Get wall vertices
+    const room = rooms.find(r => r.id === roomId);
+    if (!room) {
+      editableDimensions.cancelEditingDimension();
+      return;
+    }
+
+    const v1Index = edgeIndex;
+    const v2Index = (edgeIndex + 1) % room.vertices.length;
+
+    // Add distance constraint
+    constraints.addDistanceConstraint(roomId, v1Index, v2Index, newValueCm);
+
+    // Clear editing state
+    editableDimensions.cancelEditingDimension();
+  }, [editableDimensions, constraints, rooms]);
+
+  /**
+   * Handle dimension editing cancellation
+   */
+  const handleDimensionCancel = useCallback(() => {
+    editableDimensions.cancelEditingDimension();
+  }, [editableDimensions]);
+
+  /**
+   * Double click handler
+   * - Assembly mode: Enter edit mode on the clicked room
+   * - Edit mode: Add vertex at click position
    */
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -268,6 +346,17 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     const screenY = e.clientY - rect.top;
     const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport.viewport);
 
+    // Assembly mode - double click on a room to enter edit mode
+    if (editorMode === EditorMode.Assembly) {
+      // Find which room was clicked
+      const hit = findBestHit(worldPoint, rooms);
+      if (hit && hit.roomId) {
+        // Select the room and enter edit mode
+        selection.selectRoom(hit.roomId);
+        enterEditMode();
+      }
+    }
+
     // Edit mode - add vertex at click position (finds closest edge automatically)
     if (editorMode === EditorMode.Edit) {
       const selectedRoom = getSelectedRoom();
@@ -276,7 +365,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         editMode.addVertexToClosestEdge(worldPoint);
       }
     }
-  }, [editorMode, viewport, getSelectedRoom, editMode]);
+  }, [editorMode, viewport, getSelectedRoom, editMode, rooms, selection, enterEditMode]);
 
   /**
    * Mouse down handler
@@ -299,6 +388,17 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
     // Left click
     if (e.button === 0) {
+      // Check for dimension label click first (if dimensions are shown)
+      if (showDimensions) {
+        const hitLabel = editableDimensions.hitTestDimensionLabel(screenX, screenY);
+        if (hitLabel) {
+          console.log('Dimension label clicked:', hitLabel);
+          editableDimensions.startEditingDimension(hitLabel);
+          console.log('Editing dimension state:', editableDimensions.editingDimension);
+          return;
+        }
+      }
+
       // Drawing mode
       if (editorMode === EditorMode.Draw && toolMode === ToolMode.DrawRoom) {
         if (!drawing.drawingState.isDrawing) {
@@ -309,7 +409,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         return;
       }
 
-      // Edit mode - vertex/edge selection and dragging
+      // Edit mode - vertex/edge/wall selection and dragging
       if (editorMode === EditorMode.Edit) {
         const selectedRoom = getSelectedRoom();
         if (selectedRoom) {
@@ -321,7 +421,15 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
             return;
           }
 
-          // Check edge hit
+          // Check wall hit before edge (so wall inner edge doesn't trigger floor edge selection)
+          const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
+          if (wallIndex !== -1) {
+            selection.selectWall(wallIndex);
+            editMode.startWallDrag(wallIndex, worldPoint, { x: screenX, y: screenY });
+            return;
+          }
+
+          // Check edge hit (floor polygon edges)
           const edgeIndex = hitTestRoomEdges(worldPoint, selectedRoom);
           if (edgeIndex !== -1) {
             selection.selectEdge(edgeIndex);
@@ -337,9 +445,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
           return;
         }
 
-        // Clicked on empty space - clear selection
+        // Clicked outside any room - exit to Assembly mode
         if (!e.shiftKey) {
-          selection.clearSelection();
+          enterAssemblyMode();
         }
         return;
       }
@@ -379,7 +487,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         return;
       }
     }
-  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, editMode, assemblyMode]);
+  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, editMode, assemblyMode, enterAssemblyMode]);
 
   /**
    * Mouse move handler
@@ -413,17 +521,30 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         if (editMode.dragState.dragType === 'vertex' && selection.selection.selectedVertexIndex !== null) {
           editMode.updateVertexDrag(selection.selection.selectedVertexIndex, worldPoint, { x: screenX, y: screenY });
           return;
-        } else if (editMode.dragState.dragType === 'edge' && selection.selection.selectedEdgeIndex !== null) {
-          editMode.updateEdgeDrag(selection.selection.selectedEdgeIndex, worldPoint, { x: screenX, y: screenY });
-          return;
+        } else if (editMode.dragState.dragType === 'edge') {
+          // Edge drag can be from either an edge handle or a wall
+          if (selection.selection.selectedEdgeIndex !== null) {
+            editMode.updateEdgeDrag(selection.selection.selectedEdgeIndex, worldPoint, { x: screenX, y: screenY });
+            return;
+          } else if (selection.selection.selectedWallIndex !== null) {
+            editMode.updateWallDrag(selection.selection.selectedWallIndex, worldPoint, { x: screenX, y: screenY });
+            return;
+          }
         }
       }
 
-      // Update hover state for vertices/edges
+      // Update hover state for vertices/edges/walls
       if (selectedRoom) {
         const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.viewport.zoom);
         if (vertexIndex !== -1) {
           selection.setHoverVertex(vertexIndex);
+          return;
+        }
+
+        // Check wall hover before edge (same priority as click)
+        const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
+        if (wallIndex !== -1) {
+          selection.setHoverWall(wallIndex);
           return;
         }
 
@@ -435,6 +556,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
         selection.setHoverVertex(null);
         selection.setHoverEdge(null);
+        selection.setHoverWall(null);
       }
       return;
     }
@@ -542,8 +664,20 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         editMode.endVertexDrag();
         selection.clearVertexSelection();
       } else if (editMode.dragState.dragType === 'edge') {
-        editMode.endEdgeDrag();
-        selection.clearEdgeSelection();
+        // Check if it was a wall drag or edge drag
+        if (selection.selection.selectedWallIndex !== null) {
+          // Only clear wall selection if we actually dragged (moved more than threshold)
+          if (editMode.dragState.isDragging) {
+            editMode.endWallDrag();
+            selection.clearWallSelection();
+          } else {
+            // Just clicked, keep wall selected
+            editMode.endWallDrag();
+          }
+        } else if (selection.selection.selectedEdgeIndex !== null) {
+          editMode.endEdgeDrag();
+          selection.clearEdgeSelection();
+        }
       }
     }
 
@@ -594,20 +728,35 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
   };
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 w-full h-full"
-      style={{
-        cursor: getCursor(),
-        touchAction: 'none',
-        backgroundColor: '#313435'
-      }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      onDoubleClick={handleDoubleClick}
-      onContextMenu={(e) => e.preventDefault()}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{
+          cursor: getCursor(),
+          touchAction: 'none',
+          backgroundColor: '#313435'
+        }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
+      {/* Dimension input overlay */}
+      {editableDimensions.editingDimension && (
+        <>
+          {console.log('Rendering DimensionInput with:', editableDimensions.editingDimension)}
+          <DimensionInput
+            position={editableDimensions.editingDimension.position}
+            currentValue={editableDimensions.editingDimension.currentValue}
+            onSubmit={handleDimensionSubmit}
+            onCancel={handleDimensionCancel}
+          />
+        </>
+      )}
+    </>
   );
 };

@@ -3,6 +3,8 @@
  * Clean React-first architecture - no ECS
  */
 
+import type { Primitive } from '../../../lib/geometry/GradientDescentSolver';
+
 // ============================================================================
 // GEOMETRY TYPES
 // ============================================================================
@@ -44,9 +46,30 @@ export enum ToolMode {
 // ROOM TYPES
 // ============================================================================
 
+export type WallType =
+  | 'exterior'
+  | 'interior_division'
+  | 'interior_structural'
+  | 'interior_partition'
+  | 'terrain_contact'
+  | 'adiabatic';
+
+export interface Aperture {
+  id: string;
+  type: 'door' | 'window';
+  anchorVertex: 'start' | 'end';
+  distance: number;  // Distance from anchor vertex in meters
+  width: number;     // Width in meters
+  height: number;    // Height in meters
+  sillHeight?: number; // Sill height for windows in meters
+}
+
 export interface Wall {
   vertexIndex: number;  // Start vertex index (end is vertexIndex + 1)
   thickness: number;
+  wallType?: WallType;  // Type of wall (affects thermal properties)
+  height?: number;      // Wall height in meters (default 2.7m)
+  apertures?: Aperture[]; // Doors and windows
   // Computed properties for rendering
   normal?: Vertex;      // Perpendicular vector pointing outward
   startCorner?: Vertex; // Intersection point at start (for mitered corners)
@@ -71,6 +94,7 @@ export interface Room {
 
   // Constraints
   constraints: Constraint[];
+  primitives?: Primitive[];  // Optional - solver primitives (only used when constraints active)
 
   // Visual properties
   color?: string;
@@ -155,9 +179,11 @@ export interface SelectionState {
   selectedRoomIds: string[];
   selectedVertexIndex: number | null;
   selectedEdgeIndex: number | null;
+  selectedWallIndex: number | null;
   hoverRoomId: string | null;
   hoverVertexIndex: number | null;
   hoverEdgeIndex: number | null;
+  hoverWallIndex: number | null;
 }
 
 export interface SelectionRectangleState {

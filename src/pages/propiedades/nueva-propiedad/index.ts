@@ -1,0 +1,1 @@
+export { NuevaPropiedadPage } from './NuevaPropiedadPage';

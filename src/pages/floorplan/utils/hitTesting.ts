@@ -10,6 +10,7 @@ import { getRotationHandlePosition, calculateRoomCenter } from './rotation';
 // Hit test thresholds (in screen pixels)
 const VERTEX_HIT_THRESHOLD = 20; // Larger for touch-friendly interaction
 const EDGE_HIT_THRESHOLD = 8;
+const WALL_HIT_THRESHOLD = 8; // Threshold for wall hit testing
 const ROTATION_HANDLE_THRESHOLD = 15;
 
 /**
@@ -82,6 +83,68 @@ export function hitTestRoomEdges(
 
     if (hitTestEdge(worldPoint, v1, v2, threshold)) {
       return i;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Hit test all walls in a room
+ * Returns the index of the hit wall, or -1 if no hit
+ * Walls are tested based on their thickness (the thick outline around the room)
+ */
+export function hitTestRoomWalls(
+  worldPoint: Vertex,
+  room: Room
+): number {
+  const n = room.vertices.length;
+
+  for (let wallIndex = 0; wallIndex < room.walls.length; wallIndex++) {
+    const wall = room.walls[wallIndex];
+
+    // Get the two vertices for this wall
+    const v1Local = room.vertices[wall.vertexIndex];
+    const v2Local = room.vertices[(wall.vertexIndex + 1) % n];
+
+    // Transform to world coordinates
+    const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+    const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+    // Calculate the edge direction and perpendicular normal
+    const dx = v2World.x - v1World.x;
+    const dy = v2World.y - v1World.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+
+    if (length === 0) continue;
+
+    const dirX = dx / length;
+    const dirY = dy / length;
+
+    // Perpendicular OUTWARD (for CCW polygon, right-hand normal)
+    const normalX = dirY;
+    const normalY = -dirX;
+
+    // Create the four corners of the wall rectangle
+    // Inner edge (floor polygon side)
+    const innerStart = { x: v1World.x, y: v1World.y };
+    const innerEnd = { x: v2World.x, y: v2World.y };
+
+    // Outer edge (wall outer boundary)
+    const outerStart = {
+      x: v1World.x + normalX * wall.thickness * room.scale,
+      y: v1World.y + normalY * wall.thickness * room.scale
+    };
+    const outerEnd = {
+      x: v2World.x + normalX * wall.thickness * room.scale,
+      y: v2World.y + normalY * wall.thickness * room.scale
+    };
+
+    // Check if point is inside the wall area (between inner and outer edges)
+    // Create a polygon from the four corners
+    const wallPolygon = [innerStart, innerEnd, outerEnd, outerStart];
+    if (pointInPolygon(worldPoint, wallPolygon)) {
+      return wallIndex;
     }
   }
 

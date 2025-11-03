@@ -7,14 +7,17 @@ import {
   Bell,
   CheckSquare,
   Code,
+  Home,
   LayoutGrid,
   MessageCircleMore,
   MessageSquare,
+  Receipt,
   Settings,
   Shield,
   ShoppingCart,
   UserCircle,
   Users,
+  Share2,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { getHeight } from '@/lib/dom';
@@ -38,6 +41,24 @@ interface MenuItem {
 
 const menuItems: MenuItem[] = [
   { icon: BarChart3, tooltip: 'Dashboard', path: '/', rootPath: '/' },
+  {
+    icon: Home,
+    tooltip: 'Propiedades',
+    path: '/propiedades/new',
+    rootPath: '/propiedades/',
+  },
+  {
+    icon: Receipt,
+    tooltip: 'Facturas',
+    path: '/facturas',
+    rootPath: '/facturas/',
+  },
+  {
+    icon: Share2,
+    tooltip: 'Afiliados',
+    path: '/afiliados',
+    rootPath: '/afiliados/',
+  },
   {
     icon: UserCircle,
     tooltip: 'Profile',

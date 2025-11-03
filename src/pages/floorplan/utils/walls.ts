@@ -40,10 +40,108 @@ function findLineIntersection(
 }
 
 /**
+ * Check if point lies on line segment
+ */
+function pointOnSegment(
+  point: Vertex,
+  v1: Vertex,
+  v2: Vertex,
+  tolerance: number = 0.01
+): boolean {
+  // Calculate distance from point to line segment
+  const dx = v2.x - v1.x;
+  const dy = v2.y - v1.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+
+  if (length === 0) return false;
+
+  // Project point onto line
+  const t = ((point.x - v1.x) * dx + (point.y - v1.y) * dy) / (length * length);
+
+  // Check if projection is on segment (between 0 and 1)
+  if (t < 0 || t > 1) return false;
+
+  // Calculate closest point on segment
+  const closestX = v1.x + t * dx;
+  const closestY = v1.y + t * dy;
+
+  // Check distance
+  const dist = Math.sqrt((point.x - closestX) ** 2 + (point.y - closestY) ** 2);
+  return dist < tolerance;
+}
+
+/**
+ * Find matching wall from old walls by comparing vertex positions and topology
+ * Handles both vertex movement and vertex insertion/deletion
+ */
+function findMatchingWall(
+  newWallIndex: number,
+  v1: Vertex,
+  v2: Vertex,
+  newVertices: Vertex[],
+  oldVertices: Vertex[],
+  existingWalls: Wall[]
+): Wall | undefined {
+  const tolerance = 0.01; // 0.01 cm tolerance for matching vertices
+
+  // Strategy 1: If vertex count is the same, match by topology (vertexIndex)
+  // This handles vertex movement correctly
+  if (newVertices.length === oldVertices.length) {
+    const matchingWall = existingWalls.find(w => w.vertexIndex === newWallIndex);
+    if (matchingWall) {
+      return matchingWall;
+    }
+  }
+
+  // Strategy 2: Try exact position match
+  // This works for walls that weren't affected by vertex add/delete
+  for (const wall of existingWalls) {
+    const oldV1 = oldVertices[wall.vertexIndex];
+    const oldV2 = oldVertices[(wall.vertexIndex + 1) % oldVertices.length];
+
+    // Check if vertices match exactly (same start and end)
+    const v1Match = Math.abs(v1.x - oldV1.x) < tolerance && Math.abs(v1.y - oldV1.y) < tolerance;
+    const v2Match = Math.abs(v2.x - oldV2.x) < tolerance && Math.abs(v2.y - oldV2.y) < tolerance;
+
+    if (v1Match && v2Match) {
+      return wall;
+    }
+  }
+
+  // Strategy 3: Check if this new wall segment lies within an old wall
+  // This handles the case where a vertex was added to split a wall
+  for (const wall of existingWalls) {
+    const oldV1 = oldVertices[wall.vertexIndex];
+    const oldV2 = oldVertices[(wall.vertexIndex + 1) % oldVertices.length];
+
+    // Check if both new vertices lie on the old wall segment
+    const v1OnOld = pointOnSegment(v1, oldV1, oldV2, tolerance);
+    const v2OnOld = pointOnSegment(v2, oldV1, oldV2, tolerance);
+
+    if (v1OnOld && v2OnOld) {
+      // This new wall is a subsegment of the old wall (wall was split)
+      return wall;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Generate walls from room vertices with proper corner intersections
  * Adapted from original WallGenerationService.ts:420 (generateWallsWithIntersections)
+ *
+ * @param vertices - Room vertices
+ * @param thickness - Default wall thickness
+ * @param existingWalls - Optional existing walls to preserve properties (wallType, height, apertures)
+ * @param oldVertices - Optional old vertices to match against (required if existingWalls is provided)
  */
-export function generateWalls(vertices: Vertex[], thickness: number): Wall[] {
+export function generateWalls(
+  vertices: Vertex[],
+  thickness: number,
+  existingWalls?: Wall[],
+  oldVertices?: Vertex[]
+): Wall[] {
   if (vertices.length < 3) return [];
 
   const walls: Wall[] = [];
@@ -114,10 +212,19 @@ export function generateWalls(vertices: Vertex[], thickness: number): Wall[] {
     };
     const endCorner = findLineIntersection(currentOuterLineForEnd, nextOuterLine) || outerLineEnd;
 
-    // Store wall with computed corners
+    // Find existing wall by matching topology (if same vertex count) or positions (if different)
+    let existingWall: Wall | undefined;
+    if (existingWalls && oldVertices) {
+      existingWall = findMatchingWall(i, innerStart, innerEnd, vertices, oldVertices, existingWalls);
+    }
+
+    // Store wall with computed corners and preserved/default properties
     walls.push({
       vertexIndex: i,
-      thickness,
+      thickness: existingWall?.thickness ?? thickness,
+      wallType: existingWall?.wallType ?? 'interior_division', // Preserve or default
+      height: existingWall?.height ?? 2.7, // Preserve or default
+      apertures: existingWall?.apertures ?? [], // Preserve or default to empty
       normal: { x: normalX, y: normalY },
       // Store the computed corner intersections
       startCorner,

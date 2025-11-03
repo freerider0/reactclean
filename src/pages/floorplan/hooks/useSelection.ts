@@ -10,9 +10,11 @@ export function useSelection() {
     selectedRoomIds: [],
     selectedVertexIndex: null,
     selectedEdgeIndex: null,
+    selectedWallIndex: null,
     hoverRoomId: null,
     hoverVertexIndex: null,
-    hoverEdgeIndex: null
+    hoverEdgeIndex: null,
+    hoverWallIndex: null
   });
 
   /**
@@ -25,7 +27,8 @@ export function useSelection() {
         ? [...prev.selectedRoomIds, roomId]
         : [roomId],
       selectedVertexIndex: null,
-      selectedEdgeIndex: null
+      selectedEdgeIndex: null,
+      selectedWallIndex: null
     }));
   }, []);
 
@@ -37,7 +40,8 @@ export function useSelection() {
       ...prev,
       selectedRoomIds: roomIds,
       selectedVertexIndex: null,
-      selectedEdgeIndex: null
+      selectedEdgeIndex: null,
+      selectedWallIndex: null
     }));
   }, []);
 
@@ -59,9 +63,11 @@ export function useSelection() {
       selectedRoomIds: [],
       selectedVertexIndex: null,
       selectedEdgeIndex: null,
+      selectedWallIndex: null,
       hoverRoomId: null,
       hoverVertexIndex: null,
-      hoverEdgeIndex: null
+      hoverEdgeIndex: null,
+      hoverWallIndex: null
     });
   }, []);
 
@@ -83,7 +89,20 @@ export function useSelection() {
     setSelection(prev => ({
       ...prev,
       selectedEdgeIndex: edgeIndex,
-      selectedVertexIndex: null
+      selectedVertexIndex: null,
+      selectedWallIndex: null
+    }));
+  }, []);
+
+  /**
+   * Select a wall
+   */
+  const selectWall = useCallback((wallIndex: number) => {
+    setSelection(prev => ({
+      ...prev,
+      selectedWallIndex: wallIndex,
+      selectedVertexIndex: null,
+      selectedEdgeIndex: null
     }));
   }, []);
 
@@ -104,6 +123,16 @@ export function useSelection() {
     setSelection(prev => ({
       ...prev,
       selectedEdgeIndex: null
+    }));
+  }, []);
+
+  /**
+   * Clear wall selection
+   */
+  const clearWallSelection = useCallback(() => {
+    setSelection(prev => ({
+      ...prev,
+      selectedWallIndex: null
     }));
   }, []);
 
@@ -135,7 +164,20 @@ export function useSelection() {
     setSelection(prev => ({
       ...prev,
       hoverEdgeIndex: edgeIndex,
-      hoverVertexIndex: null
+      hoverVertexIndex: null,
+      hoverWallIndex: null
+    }));
+  }, []);
+
+  /**
+   * Set hover wall
+   */
+  const setHoverWall = useCallback((wallIndex: number | null) => {
+    setSelection(prev => ({
+      ...prev,
+      hoverWallIndex: wallIndex,
+      hoverVertexIndex: null,
+      hoverEdgeIndex: null
     }));
   }, []);
 
@@ -176,11 +218,14 @@ export function useSelection() {
     clearSelection,
     selectVertex,
     selectEdge,
+    selectWall,
     clearVertexSelection,
     clearEdgeSelection,
+    clearWallSelection,
     setHoverRoom,
     setHoverVertex,
     setHoverEdge,
+    setHoverWall,
     toggleRoomSelection,
     isRoomSelected,
     getFirstSelectedRoomId

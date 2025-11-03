@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   MessageCircleMore,
   MessageSquareDot,
+  Plus,
   Search,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
@@ -24,6 +25,18 @@ export function HeaderTopbar() {
           <StoreClientTopbar />
         ) : (
           <>
+            <Button
+              variant="ghost"
+              mode="icon"
+              shape="circle"
+              className="hover:[&_svg]:text-primary"
+              onClick={() => {
+                // TODO: Add your action here
+                console.log('+ button clicked');
+              }}
+            >
+              <Plus className="size-4.5!" />
+            </Button>
             <Button asChild className="hidden md:inline-flex">
               <Link to="account/home/get-started">Get Started</Link>
             </Button>

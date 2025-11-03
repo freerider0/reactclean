@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { useAuth } from '@/auth/context/auth-context';
 import { PageMenu } from '@/pages/public-profile';
 import { UserHero } from '@/partials/common/user-hero';
 import { DropdownMenu9 } from '@/partials/dropdown-menu/dropdown-menu-9';
@@ -17,23 +18,28 @@ import { Container } from '@/components/common/container';
 import { ProfileDefaultContent } from '.';
 
 export function ProfileDefaultPage() {
+  const { user, profile } = useAuth();
+
+  const displayName = profile?.full_name || user?.email?.split('@')[0] || 'User';
+  const displayEmail = user?.email || '';
+  const displayAvatar = profile?.avatar_url || toAbsoluteUrl('/media/avatars/300-1.png');
+
   const image = (
     <img
-      src={toAbsoluteUrl('/media/avatars/300-1.png')}
+      src={displayAvatar}
       className="rounded-full border-3 border-green-500 size-[100px] shrink-0"
-      alt="image"
+      alt={displayName}
     />
   );
 
   return (
     <Fragment>
       <UserHero
-        name="Jenny Klabber"
+        name={displayName}
         image={image}
         info={[
-          { label: 'KeenThemes', icon: Luggage },
-          { label: 'SF, Bay Area', icon: MapPin },
-          { email: 'jenny@kteam.com', icon: Mail },
+          { label: profile?.timezone || 'Europe/Madrid', icon: MapPin },
+          { email: displayEmail, icon: Mail },
         ]}
       />
       <Container>

@@ -9,6 +9,7 @@ import { useViewport } from './useViewport';
 import { useDrawing } from './useDrawing';
 import { useSelection } from './useSelection';
 import { useHistory } from './useHistory';
+import { supabase } from '@/lib/supabase';
 
 const DEFAULT_GRID_CONFIG: GridConfig = {
   enabled: true,
@@ -17,7 +18,7 @@ const DEFAULT_GRID_CONFIG: GridConfig = {
   snapEnabled: true
 };
 
-export function useFloorplan() {
+export function useFloorplan(propertyId?: string) {
   // Rooms state
   const [rooms, setRooms] = useState<Room[]>([]);
 
@@ -35,6 +36,13 @@ export function useFloorplan() {
   // Clipboard state
   const [clipboard, setClipboard] = useState<Room[]>([]);
   const [pasteOffset, setPasteOffset] = useState(0); // For multiple paste operations
+
+  // Log property context when hook is initialized
+  useEffect(() => {
+    if (propertyId) {
+      console.log('📐 useFloorplan initialized with property ID:', propertyId);
+    }
+  }, [propertyId]);
 
   // Hooks
   const viewport = useViewport();
@@ -182,6 +190,7 @@ export function useFloorplan() {
     const data = {
       version: '1.0',
       exportDate: new Date().toISOString(),
+      propertyId, // Include propertyId in exported data
       rooms,
       gridConfig
     };
@@ -192,12 +201,72 @@ export function useFloorplan() {
 
     const link = document.createElement('a');
     link.href = url;
-    link.download = `floorplan-${Date.now()}.json`;
+    // Use propertyId in filename if available
+    link.download = propertyId
+      ? `floorplan-${propertyId}.json`
+      : `floorplan-${Date.now()}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [rooms, gridConfig]);
+  }, [rooms, gridConfig, propertyId]);
+
+  /**
+   * Save floorplan to Supabase Storage
+   */
+  const saveFloorplan = useCallback(async () => {
+    if (!propertyId) {
+      console.error('Cannot save floorplan: propertyId is required');
+      return { success: false, error: 'Property ID is required' };
+    }
+
+    try {
+      // Create the floorplan data
+      const data = {
+        version: '1.0',
+        savedDate: new Date().toISOString(),
+        propertyId,
+        rooms,
+        gridConfig
+      };
+
+      // Convert to JSON blob
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+
+      // Get tenant ID from current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
+      const tenantId = user.user_metadata?.tenant_id;
+      if (!tenantId) {
+        throw new Error('Tenant ID not found');
+      }
+
+      // Upload to Supabase Storage
+      // Path: {tenantId}/properties/{propertyId}/floorplan.json
+      const filePath = `${tenantId}/properties/${propertyId}/floorplan.json`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(tenantId)
+        .upload(filePath, blob, {
+          contentType: 'application/json',
+          upsert: true // Overwrite if exists
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      console.log('✅ Floorplan saved successfully:', filePath);
+      return { success: true, path: filePath };
+    } catch (error) {
+      console.error('❌ Failed to save floorplan:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }, [propertyId, rooms, gridConfig]);
 
   /**
    * Import floorplan from JSON
@@ -344,6 +413,7 @@ export function useFloorplan() {
     // Import/Export operations
     exportFloorplan,
     importFloorplan,
+    saveFloorplan,
 
     // Grid operations
     updateGridConfig,

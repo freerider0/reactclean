@@ -1,51 +1,60 @@
+import { AuthError, AuthApiError } from '@supabase/supabase-js';
 import { AuthModel, UserModel } from '@/auth/lib/models';
 import { supabase } from '@/lib/supabase';
 
 /**
  * Supabase adapter that maintains the same interface as the existing auth flow
  * but uses Supabase under the hood.
+ *
+ * Following official Supabase Auth documentation:
+ * https://supabase.com/docs/guides/auth
+ *
+ * Error handling follows Supabase patterns:
+ * - AuthError for auth-specific errors
+ * - AuthApiError for API-level errors
  */
 export const SupabaseAdapter = {
   /**
    * Login with email and password
+   * Reference: https://supabase.com/docs/reference/javascript/auth-signinwithpassword
    */
   async login(email: string, password: string): Promise<AuthModel> {
     console.log('SupabaseAdapter: Attempting login with email:', email);
 
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (error) {
-        console.error('SupabaseAdapter: Login error from Supabase:', error);
-        throw new Error(error.message);
+    if (error) {
+      console.error('SupabaseAdapter: Login error:', error.message);
+      // Provide user-friendly error messages
+      if (error instanceof AuthApiError) {
+        if (error.status === 400) {
+          throw new Error('Invalid email or password');
+        }
       }
-
-      console.log(
-        'SupabaseAdapter: Login successful, session:',
-        data.session
-          ? {
-              access_token_length: data.session.access_token?.length,
-              refresh_token_length: data.session.refresh_token?.length,
-            }
-          : 'No session data',
-      );
-
-      // Transform Supabase session to AuthModel
-      return {
-        access_token: data.session.access_token,
-        refresh_token: data.session.refresh_token,
-      };
-    } catch (error) {
-      console.error('SupabaseAdapter: Unexpected login error:', error);
-      throw error;
+      throw new Error(error.message);
     }
+
+    if (!data.session) {
+      throw new Error('No session returned from login');
+    }
+
+    console.log('SupabaseAdapter: Login successful');
+
+    // Transform Supabase session to AuthModel
+    return {
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    };
   },
 
   /**
    * Login with OAuth provider (Google, GitHub, etc.)
+   * Reference: https://supabase.com/docs/reference/javascript/auth-signinwithoauth
+   *
+   * Uses PKCE flow by default for better security
    */
   async signInWithOAuth(
     provider:
@@ -62,35 +71,33 @@ export const SupabaseAdapter = {
       provider,
     );
 
-    try {
-      const redirectTo =
-        options?.redirectTo || `${window.location.origin}/auth/callback`;
+    const redirectTo =
+      options?.redirectTo || `${window.location.origin}/auth/callback`;
 
-      console.log('SupabaseAdapter: Using redirect URL:', redirectTo);
+    console.log('SupabaseAdapter: Using redirect URL:', redirectTo);
 
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo,
-        },
-      });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo,
+        skipBrowserRedirect: false, // Allow browser redirect for OAuth flow
+      },
+    });
 
-      if (error) {
-        console.error('SupabaseAdapter: OAuth error:', error);
-        throw new Error(error.message);
-      }
-
-      console.log('SupabaseAdapter: OAuth flow initiated successfully');
-
-      // No need to return anything - the browser will be redirected
-    } catch (error) {
-      console.error('SupabaseAdapter: Unexpected OAuth error:', error);
-      throw error;
+    if (error) {
+      console.error('SupabaseAdapter: OAuth error:', error.message);
+      throw new Error(error.message);
     }
+
+    console.log('SupabaseAdapter: OAuth flow initiated successfully');
   },
 
   /**
    * Register a new user
+   * Reference: https://supabase.com/docs/reference/javascript/auth-signup
+   *
+   * Note: If email confirmation is enabled, user will need to verify email
+   * before they can sign in. In this case, no session is returned.
    */
   async register(
     email: string,
@@ -115,13 +122,23 @@ export const SupabaseAdapter = {
             firstName && lastName ? `${firstName} ${lastName}`.trim() : '',
           created_at: new Date().toISOString(),
         },
+        emailRedirectTo: `${window.location.origin}/auth/verify-email`,
       },
     });
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error('SupabaseAdapter: Registration error:', error.message);
+      if (error instanceof AuthApiError) {
+        if (error.status === 422) {
+          throw new Error('Email already registered or invalid');
+        }
+      }
+      throw new Error(error.message);
+    }
 
     // Return empty tokens if email confirmation is required
     if (!data.session) {
+      console.log('SupabaseAdapter: Registration successful, email confirmation required');
       return {
         access_token: '',
         refresh_token: '',
@@ -197,24 +214,23 @@ export const SupabaseAdapter = {
 
   /**
    * Get current user from the session
+   * Reference: https://supabase.com/docs/reference/javascript/auth-getuser
+   *
+   * Note: This method validates the JWT token and fetches the user from the server.
+   * Use this instead of getSession() when you need fresh user data.
    */
   async getCurrentUser(): Promise<UserModel | null> {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) return null;
-
-    return this.getUserProfile();
-  },
-
-  /**
-   * Get user profile from user metadata
-   */
-  async getUserProfile(): Promise<UserModel> {
     const {
       data: { user },
       error,
     } = await supabase.auth.getUser();
 
-    if (error || !user) throw new Error(error?.message || 'User not found');
+    if (error) {
+      console.error('SupabaseAdapter: Error getting user:', error.message);
+      return null;
+    }
+
+    if (!user) return null;
 
     // Get user metadata and transform to UserModel format
     const metadata = user.user_metadata || {};

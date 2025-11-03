@@ -169,9 +169,11 @@ export function ZoomPercentage({ zoom }: { zoom: number }) {
 interface ExportImportButtonsProps {
   onExport: () => void;
   onImport: (file: File) => void;
+  onSave?: () => Promise<any>;
+  canSave?: boolean;
 }
 
-export function ExportImportButtons({ onExport, onImport }: ExportImportButtonsProps) {
+export function ExportImportButtons({ onExport, onImport, onSave, canSave = true }: ExportImportButtonsProps) {
   const handleImportClick = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -185,8 +187,38 @@ export function ExportImportButtons({ onExport, onImport }: ExportImportButtonsP
     input.click();
   };
 
+  const handleSaveClick = async () => {
+    if (onSave && canSave) {
+      const result = await onSave();
+      if (result?.success) {
+        console.log('✅ Saved successfully');
+      } else {
+        console.error('❌ Save failed:', result?.error);
+      }
+    }
+  };
+
   return (
-    <div className="absolute top-4 left-4 flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
+      {/* Save Button - Primary action */}
+      {onSave && (
+        <button
+          onClick={handleSaveClick}
+          disabled={!canSave}
+          className={`rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-white transition-all flex items-center gap-2 ${
+            canSave
+              ? 'bg-blue-600 hover:bg-blue-700'
+              : 'bg-gray-400 cursor-not-allowed'
+          }`}
+          title={canSave ? 'Save Floorplan to Database' : 'Cannot save without property ID'}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+          Save
+        </button>
+      )}
+
       <button
         onClick={onExport}
         className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2"

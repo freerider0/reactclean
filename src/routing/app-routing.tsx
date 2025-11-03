@@ -4,6 +4,11 @@ import { useLocation } from 'react-router';
 import { useLoadingBar } from 'react-top-loading-bar';
 import { AppRoutingSetup } from './app-routing-setup';
 
+/**
+ * App routing with loading bar
+ * Note: Auth verification is handled by onAuthStateChange in AuthProvider
+ * No need to manually verify on route changes
+ */
 export function AppRouting() {
   const { start, complete } = useLoadingBar({
     color: 'var(--color-primary)',
@@ -13,39 +18,24 @@ export function AppRouting() {
     height: 2,
   });
 
-  const { verify, setLoading } = useAuth();
+  const { isLoading } = useAuth();
   const [previousLocation, setPreviousLocation] = useState('');
-  const [firstLoad, setFirstLoad] = useState(true);
   const location = useLocation();
   const path = location.pathname.trim();
 
+  // Show loading bar on route change
   useEffect(() => {
-    if (firstLoad) {
-      verify().finally(() => {
-        setLoading(false);
-        setFirstLoad(false);
-      });
-    }
-  });
-
-  useEffect(() => {
-    if (!firstLoad) {
+    if (!isLoading && previousLocation !== path) {
       start('static');
-      verify()
-        .catch(() => {
-          throw new Error('User verify request failed!');
-        })
-        .finally(() => {
-          setPreviousLocation(path);
-          complete();
-          if (path === previousLocation) {
-            setPreviousLocation('');
-          }
-        });
+      setTimeout(() => {
+        setPreviousLocation(path);
+        complete();
+      }, 200);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location]);
+  }, [location, isLoading]);
 
+  // Scroll to top on route change
   useEffect(() => {
     if (!CSS.escape(window.location.hash)) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
