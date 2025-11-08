@@ -1,6 +1,28 @@
 import { supabase } from '@/lib/supabase';
 import imageCompression from 'browser-image-compression';
 
+/**
+ * Datos estructurados extraídos de documentos inmobiliarios
+ */
+export interface ExtractedPropertyData {
+  referenciaCatastral?: string;
+  direccion?: string;
+  numero?: string;
+  piso?: string;
+  puerta?: string;
+  ciudad?: string;
+  provincia?: string;
+  codigoPostal?: string;
+  superficieConstruida?: string;
+  superficieUtil?: string;
+  habitaciones?: string;
+  banos?: string;
+  anosConstruccion?: string;
+  valorCatastral?: string;
+  tipoPropiedad?: string;
+  [key: string]: string | undefined; // Allow for additional fields
+}
+
 export interface ClassificationResult {
   type: 'identity_document' | 'property_document' | 'certificate' | 'contract' | 'technical_document' | 'property_photo' | 'unknown';
   category: string;
@@ -8,6 +30,7 @@ export interface ClassificationResult {
   confidence: number;
   reasoning: string;
   alt: string;
+  extractedData?: ExtractedPropertyData; // Datos extraídos del documento
 }
 
 export interface UploadResult {
@@ -230,6 +253,40 @@ export async function uploadAndClassifyImage(
           reasoning: classifyData.reasoning,
           alt: classifyData.alt,
         };
+
+        // If it's a property document, extract structured data
+        const shouldExtractPropertyData =
+          classifyData.type === 'property_document' ||
+          classifyData.type === 'certificate' ||
+          classifyData.type === 'contract' ||
+          (classifyData.category && ['Nota Simple', 'Consulta Catastral', 'Escrituras', 'Recibo IBI', 'Certificado Energético'].includes(classifyData.category));
+
+        if (shouldExtractPropertyData) {
+          try {
+            console.log('📄 Document is property-related, extracting structured data...');
+
+            // Create FormData with the file
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const extractResponse = await fetch('http://localhost:3001/api/ai/extract-property-data', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (extractResponse.ok) {
+              const extractData = await extractResponse.json();
+              if (extractData.success && extractData.extractedData) {
+                console.log('✅ Property data extracted:', Object.keys(extractData.extractedData).filter(k => extractData.extractedData[k]));
+                classification.extractedData = extractData.extractedData;
+              }
+            } else {
+              console.warn('⚠️  Property data extraction failed (non-blocking)');
+            }
+          } catch (extractError) {
+            console.warn('⚠️  Property data extraction error (non-blocking):', extractError);
+          }
+        }
 
         return {
           success: true,

@@ -7,7 +7,9 @@ import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useFloorplan } from './hooks/useFloorplan';
 import { useConstraints } from './hooks/useConstraints';
+import { useGeoRefMode } from './hooks/useGeoRefMode';
 import { Canvas } from './components/Canvas';
+import { GeoRefCanvas } from './components/GeoRefCanvas';
 import { ModeSelectorBar } from './components/ui/ModeSelectorBar';
 import {
   RoomInfoDisplay,
@@ -19,7 +21,9 @@ import {
 import { WallPropertiesPanel } from './components/ui/WallPropertiesPanel';
 import { ConstraintToolbar } from './components/ui/ConstraintToolbar';
 import { EditorMode } from './types';
+import type { GeoReference } from './types/geo';
 import { generateWalls } from './utils/walls';
+import { catastroApi, default as CatastroApiService } from '@/services/catastroApiService';
 
 interface LocationState {
   propertyId?: string;
@@ -43,16 +47,96 @@ export const FloorplanPage: React.FC = () => {
   const propertyData = locationState?.propertyData;
   const returnTo = locationState?.returnTo;
 
-  const floorplan = useFloorplan(propertyId); // Pass propertyId to hook
+  // Initial geo reference (will be loaded from saved data or initialized)
+  const [initialGeoRef] = useState<GeoReference>({
+    anchor: { x: 0, y: 0 }, // Will be initialized from cadastral data
+    rotation: 0,
+    srid: 25831, // Default SRID (UTM Zone 31N for Spain)
+    scale: 1.0,
+  });
+
+  const floorplan = useFloorplan({
+    propertyId,
+    geoReference: initialGeoRef,
+  });
+
   const [showDimensions, setShowDimensions] = useState(true); // Show dimensions by default
 
-  // Log property context
+  // Cadastral data state
+  const [parcelWKT, setParcelWKT] = useState<string | undefined>(undefined);
+  const [parcelSRID, setParcelSRID] = useState<number | undefined>(undefined);
+  const [isLoadingCadastral, setIsLoadingCadastral] = useState(false);
+
+  // Load cadastral data if available
   useEffect(() => {
     if (propertyId) {
       console.log('🏗️ FloorplanPage loaded with property context:');
       console.log('  Property ID:', propertyId);
       console.log('  Property Data:', propertyData);
       console.log('  Return To:', returnTo);
+
+      // If we have a cadastral reference, load parcel data
+      if (propertyData?.referenciaCatastral) {
+        const refcat = propertyData.referenciaCatastral;
+
+        // Extract parcel reference (first 14 characters if it's a 20-char reference)
+        const parcelRef = CatastroApiService.extractParcelRefcat(refcat);
+
+        if (parcelRef.length === 14) {
+          console.log('📍 Loading cadastral data for:', parcelRef);
+          setIsLoadingCadastral(true);
+
+          catastroApi.getParcela(parcelRef)
+            .then(parcelaData => {
+              console.log('✅ Cadastral data loaded (RAW):', JSON.stringify(parcelaData, null, 2));
+              console.log('📊 Parcela data structure:', parcelaData);
+              console.log('🗺️ Geometria:', parcelaData?.parcela?.geometria);
+              console.log('📍 Coordenadas:', parcelaData?.parcela?.geometria?.coordenadas);
+
+              // Store parcel geometry for GeoRefCanvas
+              if (parcelaData?.parcela?.geometria?.wkt) {
+                setParcelWKT(parcelaData.parcela.geometria.wkt);
+                console.log('✅ Parcel WKT set:', parcelaData.parcela.geometria.wkt.substring(0, 100) + '...');
+              } else {
+                console.warn('⚠️  No WKT found in response');
+              }
+
+              if (parcelaData?.parcela?.geometria?.srid) {
+                setParcelSRID(parcelaData.parcela.geometria.srid);
+                console.log('✅ Parcel SRID set:', parcelaData.parcela.geometria.srid);
+              } else {
+                console.warn('⚠️  No SRID found in response');
+              }
+
+              // Update geo reference with parcel centroid
+              const centroid = parcelaData?.parcela?.geometria?.coordenadas;
+              if (centroid && centroid.x && centroid.y) {
+                const newGeoRef: GeoReference = {
+                  anchor: { x: centroid.x, y: centroid.y },
+                  rotation: 0,
+                  srid: parcelaData.parcela.geometria.srid,
+                  scale: 1.0,
+                };
+
+                console.log('📍 Initializing geo-reference with parcel centroid:', newGeoRef);
+                console.log('   X:', centroid.x);
+                console.log('   Y:', centroid.y);
+                console.log('   SRID:', parcelaData.parcela.geometria.srid);
+
+                floorplan.setGeoReference(newGeoRef);
+              } else {
+                console.error('❌ Invalid centroid data:', centroid);
+                console.error('   Full response:', parcelaData);
+              }
+            })
+            .catch(error => {
+              console.error('❌ Failed to load cadastral data:', error);
+            })
+            .finally(() => {
+              setIsLoadingCadastral(false);
+            });
+        }
+      }
     } else {
       console.log('🏗️ FloorplanPage loaded without property context (standalone mode)');
     }
@@ -63,6 +147,26 @@ export const FloorplanPage: React.FC = () => {
     rooms: floorplan.rooms,
     selectedRoomId: floorplan.selection.selection.selectedRoomIds[0] || null,
     updateRoom: floorplan.updateRoom
+  });
+
+  // GeoRef mode state
+  const [geoRefInteractionMode, setGeoRefInteractionMode] = useState<'translate' | 'rotate' | 'none'>('none');
+  const [geoRefSnapEnabled, setGeoRefSnapEnabled] = useState(false);
+
+  // Initialize geoReference in store if not set
+  useEffect(() => {
+    if (!floorplan.geoReference) {
+      console.log('🔧 Initializing geoReference in store with:', initialGeoRef);
+      floorplan.setGeoReference(initialGeoRef);
+    }
+  }, []);
+
+  // GeoRef hook - use ONLY store state
+  const geoRefMode = useGeoRefMode({
+    initialGeoRef: floorplan.geoReference || initialGeoRef,
+    onGeoRefChange: floorplan.setGeoReference,
+    rooms: floorplan.rooms,
+    snapEnabled: geoRefSnapEnabled,
   });
 
   /**
@@ -117,6 +221,9 @@ export const FloorplanPage: React.FC = () => {
       }
       if (e.code === 'Digit3' || e.code === 'KeyA') {
         floorplan.enterAssemblyMode();
+      }
+      if (e.code === 'Digit4' || e.code === 'KeyR') {
+        floorplan.enterGeoRefMode();
       }
 
       // Grid toggle
@@ -251,8 +358,24 @@ export const FloorplanPage: React.FC = () => {
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gray-50">
-      {/* Canvas */}
-      <Canvas floorplan={floorplan} showDimensions={showDimensions} constraints={constraints} />
+      {/* Canvas - Conditional rendering based on editor mode */}
+      {floorplan.editorMode === EditorMode.GeoRef ? (
+        <GeoRefCanvas
+          rooms={floorplan.rooms}
+          geoRef={floorplan.geoReference || initialGeoRef}
+          parcelWKT={parcelWKT}
+          parcelSRID={parcelSRID || currentGeoRef.srid}
+          interactionMode={geoRefInteractionMode}
+          onDragStart={geoRefMode.startDrag}
+          onDragMove={geoRefMode.updateDrag}
+          onDragEnd={geoRefMode.endDrag}
+          onRotateStart={geoRefMode.startRotate}
+          onRotateMove={geoRefMode.updateRotate}
+          onRotateEnd={geoRefMode.endRotate}
+        />
+      ) : (
+        <Canvas floorplan={floorplan} showDimensions={showDimensions} constraints={constraints} />
+      )}
 
       {/* Back Button (Top Left) */}
       <Link
@@ -283,6 +406,7 @@ export const FloorplanPage: React.FC = () => {
           if (mode === EditorMode.Draw) floorplan.enterDrawMode();
           else if (mode === EditorMode.Edit) floorplan.enterEditMode();
           else if (mode === EditorMode.Assembly) floorplan.enterAssemblyMode();
+          else if (mode === EditorMode.GeoRef) floorplan.enterGeoRefMode();
         }}
         canEdit={floorplan.selection.selection.selectedRoomIds.length > 0}
       />

@@ -5,6 +5,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { Room, EditorMode, ToolMode, GridConfig } from '../types';
+import type { GeoReference } from '../types/geo';
 import { useViewport } from './useViewport';
 import { useDrawing } from './useDrawing';
 import { useSelection } from './useSelection';
@@ -18,7 +19,22 @@ const DEFAULT_GRID_CONFIG: GridConfig = {
   snapEnabled: true
 };
 
-export function useFloorplan(propertyId?: string) {
+interface UseFloorplanOptions {
+  propertyId?: string;
+  geoReference?: GeoReference;
+  onGeoReferenceChange?: (geoRef: GeoReference) => void;
+}
+
+export function useFloorplan(
+  propertyIdOrOptions?: string | UseFloorplanOptions
+) {
+  // Handle both old signature (string) and new signature (options)
+  const options = typeof propertyIdOrOptions === 'string'
+    ? { propertyId: propertyIdOrOptions }
+    : propertyIdOrOptions || {};
+
+  const { propertyId, geoReference: initialGeoRef, onGeoReferenceChange } = options;
+
   // Rooms state
   const [rooms, setRooms] = useState<Room[]>([]);
 
@@ -29,6 +45,9 @@ export function useFloorplan(propertyId?: string) {
   const [editorMode, setEditorMode] = useState<EditorMode>(EditorMode.Draw);
   const [toolMode, setToolMode] = useState<ToolMode>(ToolMode.DrawRoom);
   const [gridConfig, setGridConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
+
+  // GeoReference state
+  const [geoReference, setGeoReference] = useState<GeoReference | undefined>(initialGeoRef);
 
   // Keyboard state
   const [spacePressed, setSpacePressed] = useState(false);
@@ -52,6 +71,13 @@ export function useFloorplan(propertyId?: string) {
   useEffect(() => {
     history.pushState(rooms, 'Room update');
   }, [rooms]);
+
+  // Notify parent when geo reference changes
+  useEffect(() => {
+    if (geoReference && onGeoReferenceChange) {
+      onGeoReferenceChange(geoReference);
+    }
+  }, [geoReference, onGeoReferenceChange]);
 
   /**
    * Create a new room
@@ -192,7 +218,8 @@ export function useFloorplan(propertyId?: string) {
       exportDate: new Date().toISOString(),
       propertyId, // Include propertyId in exported data
       rooms,
-      gridConfig
+      gridConfig,
+      geoReference // Include geo reference
     };
 
     const json = JSON.stringify(data, null, 2);
@@ -227,7 +254,8 @@ export function useFloorplan(propertyId?: string) {
         savedDate: new Date().toISOString(),
         propertyId,
         rooms,
-        gridConfig
+        gridConfig,
+        geoReference // Include geo reference
       };
 
       // Convert to JSON blob
@@ -293,6 +321,11 @@ export function useFloorplan(propertyId?: string) {
           setGridConfig(data.gridConfig);
         }
 
+        // Import geo reference if present
+        if (data.geoReference) {
+          setGeoReference(data.geoReference);
+        }
+
         // Clear selection and reset view
         selection.clearSelection();
         viewport.resetViewport();
@@ -354,6 +387,23 @@ export function useFloorplan(propertyId?: string) {
   }, [drawing]);
 
   /**
+   * Switch to geo-reference mode
+   */
+  const enterGeoRefMode = useCallback(() => {
+    setEditorMode(EditorMode.GeoRef);
+    setToolMode(ToolMode.Select);
+    selection.clearSelection();
+    drawing.cancelDrawing();
+  }, [selection, drawing]);
+
+  /**
+   * Set editor mode directly (for flexibility)
+   */
+  const setEditorModeDirectly = useCallback((mode: EditorMode) => {
+    setEditorMode(mode);
+  }, []);
+
+  /**
    * Clear all rooms
    */
   const clearAll = useCallback(() => {
@@ -390,6 +440,7 @@ export function useFloorplan(propertyId?: string) {
     editorMode,
     toolMode,
     gridConfig,
+    geoReference,
     spacePressed,
 
     // Hooks
@@ -420,10 +471,15 @@ export function useFloorplan(propertyId?: string) {
     toggleGrid,
     toggleGridSnap,
 
+    // GeoReference operations
+    setGeoReference,
+
     // Mode switching
     enterDrawMode,
     enterEditMode,
     enterAssemblyMode,
+    enterGeoRefMode,
+    setEditorMode: setEditorModeDirectly,
     setToolMode,
 
     // Keyboard state

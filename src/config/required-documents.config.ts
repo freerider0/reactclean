@@ -125,8 +125,68 @@ export const PROPERTY_TYPES_CONFIG: PropertyTypeConfig[] = [
     ],
   },
   {
+    propertyType: 'loft',
+    displayName: 'Loft',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.CEDULA_HABITABILIDAD,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'chalet_adosado',
+    displayName: 'Chalet Adosado',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.CEDULA_HABITABILIDAD,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'chalet_pareado',
+    displayName: 'Chalet Pareado',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.CEDULA_HABITABILIDAD,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'villa',
+    displayName: 'Villa',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.CEDULA_HABITABILIDAD,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'casa_campo',
+    displayName: 'Casa de Campo',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.CEDULA_HABITABILIDAD,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'finca_rustica',
+    displayName: 'Finca Rústica',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
     propertyType: 'local',
     displayName: 'Local Comercial',
+    requiredDocuments: [
+      REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
+      REQUIRED_DOCUMENTS.NOTA_SIMPLE,
+    ],
+  },
+  {
+    propertyType: 'nave_industrial',
+    displayName: 'Nave Industrial',
     requiredDocuments: [
       REQUIRED_DOCUMENTS.CERTIFICADO_ENERGETICO,
       REQUIRED_DOCUMENTS.NOTA_SIMPLE,
@@ -203,4 +263,42 @@ export function isDocumentUploaded(
       doc.classification?.category?.toLowerCase().includes(requiredDoc.name.toLowerCase()) ||
       doc.classification?.type === requiredDoc.type
   );
+}
+
+/**
+ * Normalize property type from AI output (e.g., "Chalet Adosado") to config format (e.g., "chalet_adosado")
+ */
+export function normalizePropertyType(aiPropertyType: string | null | undefined): string | null {
+  if (!aiPropertyType) return null;
+
+  // Mapping from AI output to config values
+  const typeMapping: Record<string, string> = {
+    'piso': 'piso',
+    'apartamento': 'apartamento',
+    'ático': 'atico',
+    'attico': 'atico',
+    'duplex': 'duplex',
+    'dúplex': 'duplex',
+    'estudio': 'estudio',
+    'loft': 'loft',
+    'casa': 'casa',
+    'chalet': 'chalet',
+    'chalet adosado': 'chalet_adosado',
+    'chalet pareado': 'chalet_pareado',
+    'villa': 'villa',
+    'casa de campo': 'casa_campo',
+    'finca rústica': 'finca_rustica',
+    'finca rustica': 'finca_rustica',
+    'local comercial': 'local',
+    'local': 'local',
+    'oficina': 'oficina',
+    'nave industrial': 'nave_industrial',
+    'garaje': 'garaje',
+    'plaza de garaje': 'garaje',
+    'trastero': 'trastero',
+    'terreno': 'terreno',
+  };
+
+  const normalized = aiPropertyType.toLowerCase().trim();
+  return typeMapping[normalized] || null;
 }

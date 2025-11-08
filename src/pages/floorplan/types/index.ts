@@ -5,6 +5,9 @@
 
 import type { Primitive } from '../../../lib/geometry/GradientDescentSolver';
 
+// Re-export geo types
+export type { GeoReference, InitialGeoReference } from './geo';
+
 // ============================================================================
 // GEOMETRY TYPES
 // ============================================================================
@@ -33,7 +36,8 @@ export interface Viewport {
 export enum EditorMode {
   Draw = 'draw',       // Drawing new rooms
   Edit = 'edit',       // Editing room geometry (vertices, constraints)
-  Assembly = 'assembly' // Moving/rotating/joining rooms
+  Assembly = 'assembly', // Moving/rotating/joining rooms
+  GeoRef = 'geoRef'    // Geo-referencing floorplan on map
 }
 
 export enum ToolMode {

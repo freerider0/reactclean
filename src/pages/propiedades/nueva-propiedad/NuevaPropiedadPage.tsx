@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Save, Home, Sparkles, Building2, MapPin, Ruler, FileText, Euro, Camera, Users, Image } from 'lucide-react';
 import type { UploadResult } from '@/services/storageService';
 import { generatePropertyId } from '@/utils/uuid';
-import { getPropertyTypeOptions } from '@/config/required-documents.config';
+import { getPropertyTypeOptions, normalizePropertyType } from '@/config/required-documents.config';
 
 interface PropiedadData {
   // Identificación
@@ -153,6 +153,75 @@ export const NuevaPropiedadPage: React.FC = () => {
     if (uploadResult.classification) {
       setHasAIData(true);
       console.log('✅ AI data detected:', uploadResult.classification.type);
+
+      // If we have extracted property data, auto-fill the form
+      if (uploadResult.classification.extractedData) {
+        const extractedData = uploadResult.classification.extractedData;
+        console.log('📋 Auto-filling form with extracted data:', extractedData);
+
+        // Update form fields with extracted data (only if current field is empty)
+        setPropiedadData(prev => {
+          const updates: Partial<PropiedadData> = {};
+
+          // Only update fields that are currently empty
+          if (!prev.referenciaCatastral && extractedData.referenciaCatastral) {
+            updates.referenciaCatastral = extractedData.referenciaCatastral;
+          }
+          if (!prev.direccion && extractedData.direccion) {
+            updates.direccion = extractedData.direccion;
+          }
+          if (!prev.numero && extractedData.numero) {
+            updates.numero = extractedData.numero;
+          }
+          if (!prev.piso && extractedData.piso) {
+            updates.piso = extractedData.piso;
+          }
+          if (!prev.puerta && extractedData.puerta) {
+            updates.puerta = extractedData.puerta;
+          }
+          if (!prev.ciudad && extractedData.ciudad) {
+            updates.ciudad = extractedData.ciudad;
+          }
+          if (!prev.provincia && extractedData.provincia) {
+            updates.provincia = extractedData.provincia;
+          }
+          if (!prev.codigoPostal && extractedData.codigoPostal) {
+            updates.codigoPostal = extractedData.codigoPostal;
+          }
+          if (!prev.superficieConstruida && extractedData.superficieConstruida) {
+            updates.superficieConstruida = extractedData.superficieConstruida;
+          }
+          if (!prev.superficieUtil && extractedData.superficieUtil) {
+            updates.superficieUtil = extractedData.superficieUtil;
+          }
+          if (!prev.habitaciones && extractedData.habitaciones) {
+            updates.habitaciones = extractedData.habitaciones;
+          }
+          if (!prev.banos && extractedData.banos) {
+            updates.banos = extractedData.banos;
+          }
+          if (!prev.anosConstruccion && extractedData.anosConstruccion) {
+            updates.anosConstruccion = extractedData.anosConstruccion;
+          }
+          if (!prev.valorCatastral && extractedData.valorCatastral) {
+            updates.valorCatastral = extractedData.valorCatastral;
+          }
+          if (!prev.tipoPropiedad && extractedData.tipoPropiedad) {
+            // Normalize AI property type to match config format
+            const normalized = normalizePropertyType(extractedData.tipoPropiedad);
+            if (normalized) {
+              updates.tipoPropiedad = normalized;
+            }
+          }
+
+          if (Object.keys(updates).length > 0) {
+            console.log('✅ Form auto-filled with:', Object.keys(updates));
+            return { ...prev, ...updates };
+          }
+
+          return prev;
+        });
+      }
     }
   };
 
