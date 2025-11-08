@@ -3,11 +3,60 @@
  * Pure functions for drawing on canvas
  */
 
-import { Vertex, Room, Viewport, GridConfig, GuideLine } from '../types';
+import { Vertex, Room, Viewport, GridConfig, GuideLine, WallType } from '../types';
 import { worldToScreen, localToWorld } from './coordinates';
 import { getWallQuad } from './walls';
 import { getRotationHandlePosition, calculateRoomCenter } from './rotation';
 import { calculateEdgeLength, calculateMidpoint, formatDistance, calculateLabelOffset } from './dimensions';
+
+// Wall type colors for envelope edges
+const WALL_TYPE_COLORS: Record<WallType, string> = {
+  'exterior': '#10b981',           // Green
+  'neighbor_same_block': '#eab308', // Yellow
+  'neighbor_other_block': '#ea580c', // Dark orange
+  'interior_division': '#60a5fa',   // Light blue
+  'interior_structural': '#3b82f6', // Blue
+  'interior_partition': '#a855f7',  // Purple
+  'terrain_contact': '#92400e',     // Brown
+  'adiabatic': '#f97316'            // Orange
+};
+
+/**
+ * Draw envelope polygon for a room
+ */
+export function drawEnvelope(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport
+): void {
+  if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
+
+  ctx.save();
+
+  // Transform envelope vertices to world coordinates
+  const worldEnvelope = room.envelopeVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  // Transform to screen coordinates
+  const screenEnvelope = worldEnvelope.map(v => worldToScreen(v, viewport));
+
+  // Draw envelope with gray fill and black outline
+  ctx.fillStyle = '#94a3b8'; // Same gray as walls
+  ctx.strokeStyle = '#000000'; // Black
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(screenEnvelope[0].x, screenEnvelope[0].y);
+  for (let i = 1; i < screenEnvelope.length; i++) {
+    ctx.lineTo(screenEnvelope[i].x, screenEnvelope[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.restore();
+}
 
 /**
  * Draw grid on canvas
@@ -241,6 +290,49 @@ export function drawWalls(
     ctx.strokeStyle = options.selected ? '#3b82f6' : '#64748b';
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // Draw colored line on outer edge if wall has a type and is on envelope
+    if (wall.wallType && room.envelopeVertices && room.envelopeVertices.length > 0) {
+      // Check if outer edge is on the envelope
+      // An edge is on envelope if both outer vertices are close to envelope vertices
+      const tolerance = 5; // pixels in world space
+
+      // Transform envelope to world space
+      const worldEnvelope = room.envelopeVertices.map(v =>
+        localToWorld(v, room.position, room.rotation, room.scale)
+      );
+
+      // Check if outer edge matches any envelope edge
+      let isOnEnvelope = false;
+      for (let i = 0; i < worldEnvelope.length; i++) {
+        const envP1 = worldEnvelope[i];
+        const envP2 = worldEnvelope[(i + 1) % worldEnvelope.length];
+
+        // Check if [outer1, outer2] matches [envP1, envP2] in either direction
+        const dist1 = Math.hypot(outer1.x - envP1.x, outer1.y - envP1.y);
+        const dist2 = Math.hypot(outer2.x - envP2.x, outer2.y - envP2.y);
+        const dist3 = Math.hypot(outer1.x - envP2.x, outer1.y - envP2.y);
+        const dist4 = Math.hypot(outer2.x - envP1.x, outer2.y - envP1.y);
+
+        if ((dist1 < tolerance && dist2 < tolerance) || (dist3 < tolerance && dist4 < tolerance)) {
+          isOnEnvelope = true;
+          break;
+        }
+      }
+
+      // Draw colored line on outer edge if on envelope
+      if (isOnEnvelope) {
+        ctx.save();
+        ctx.shadowBlur = 0; // No shadow for type indicator
+        ctx.strokeStyle = WALL_TYPE_COLORS[wall.wallType];
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(screenOuter1.x, screenOuter1.y);
+        ctx.lineTo(screenOuter2.x, screenOuter2.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     // Draw apertures (doors and windows) if any
     if (wall.apertures && wall.apertures.length > 0) {

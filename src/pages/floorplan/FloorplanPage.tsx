@@ -344,9 +344,16 @@ export const FloorplanPage: React.FC = () => {
     if (!selectedRoom) return;
 
     const updatedWalls = [...selectedRoom.walls];
+    const currentWall = updatedWalls[wallIndex];
+
+    // Check if apertures contain windows
+    const hasWindows = apertures.some(a => a.type === 'window');
+
     updatedWalls[wallIndex] = {
-      ...updatedWalls[wallIndex],
-      apertures
+      ...currentWall,
+      apertures,
+      // Auto-assign exterior wall type if windows are present
+      wallType: hasWindows ? 'exterior' : currentWall.wallType
     };
 
     floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });

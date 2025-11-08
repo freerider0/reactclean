@@ -11,6 +11,8 @@ import { useDrawing } from './useDrawing';
 import { useSelection } from './useSelection';
 import { useHistory } from './useHistory';
 import { supabase } from '@/lib/supabase';
+import { calculateFloorplanEnvelopes } from '../utils/geometry';
+import { calculateCenterline } from '../utils/roomJoining';
 
 const DEFAULT_GRID_CONFIG: GridConfig = {
   enabled: true,
@@ -45,6 +47,10 @@ export function useFloorplan(
   const [editorMode, setEditorMode] = useState<EditorMode>(EditorMode.Draw);
   const [toolMode, setToolMode] = useState<ToolMode>(ToolMode.DrawRoom);
   const [gridConfig, setGridConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
+
+  // Wall thickness defaults (in cm)
+  const [defaultInteriorWallThickness, setDefaultInteriorWallThickness] = useState<number>(15);
+  const [defaultExteriorWallThickness, setDefaultExteriorWallThickness] = useState<number>(30);
 
   // GeoReference state
   const [geoReference, setGeoReference] = useState<GeoReference | undefined>(initialGeoRef);
@@ -103,9 +109,18 @@ export function useFloorplan(
    * Update a room
    */
   const updateRoom = useCallback((roomId: string, updates: Partial<Room>) => {
-    setRooms(prev => prev.map(room =>
-      room.id === roomId ? { ...room, ...updates } : room
-    ));
+    setRooms(prev => prev.map(room => {
+      if (room.id !== roomId) return room;
+
+      const updatedRoom = { ...room, ...updates };
+
+      // Recalculate centerlineVertices if vertices or wallThickness changed
+      if (updates.vertices || updates.wallThickness || updates.walls) {
+        updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+      }
+
+      return updatedRoom;
+    }));
   }, []);
 
   /**
@@ -219,7 +234,9 @@ export function useFloorplan(
       propertyId, // Include propertyId in exported data
       rooms,
       gridConfig,
-      geoReference // Include geo reference
+      geoReference, // Include geo reference
+      defaultInteriorWallThickness,
+      defaultExteriorWallThickness
     };
 
     const json = JSON.stringify(data, null, 2);
@@ -236,7 +253,7 @@ export function useFloorplan(
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [rooms, gridConfig, propertyId]);
+  }, [rooms, gridConfig, propertyId, geoReference, defaultInteriorWallThickness, defaultExteriorWallThickness]);
 
   /**
    * Save floorplan to Supabase Storage
@@ -255,7 +272,9 @@ export function useFloorplan(
         propertyId,
         rooms,
         gridConfig,
-        geoReference // Include geo reference
+        geoReference, // Include geo reference
+        defaultInteriorWallThickness,
+        defaultExteriorWallThickness
       };
 
       // Convert to JSON blob
@@ -294,7 +313,7 @@ export function useFloorplan(
       console.error('❌ Failed to save floorplan:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
-  }, [propertyId, rooms, gridConfig]);
+  }, [propertyId, rooms, gridConfig, geoReference, defaultInteriorWallThickness, defaultExteriorWallThickness]);
 
   /**
    * Import floorplan from JSON
@@ -313,8 +332,19 @@ export function useFloorplan(
           return;
         }
 
-        // Import rooms
-        setRooms(data.rooms);
+        // Import rooms and ensure centerlineVertices are calculated
+        const importedRooms = data.rooms.map((room: Room) => {
+          // Calculate centerlineVertices if not present
+          if (!room.centerlineVertices) {
+            return {
+              ...room,
+              centerlineVertices: calculateCenterline(room)
+            };
+          }
+          return room;
+        });
+
+        setRooms(importedRooms);
 
         // Import grid config if present
         if (data.gridConfig) {
@@ -324,6 +354,14 @@ export function useFloorplan(
         // Import geo reference if present
         if (data.geoReference) {
           setGeoReference(data.geoReference);
+        }
+
+        // Import default wall thicknesses if present
+        if (data.defaultInteriorWallThickness !== undefined) {
+          setDefaultInteriorWallThickness(data.defaultInteriorWallThickness);
+        }
+        if (data.defaultExteriorWallThickness !== undefined) {
+          setDefaultExteriorWallThickness(data.defaultExteriorWallThickness);
         }
 
         // Clear selection and reset view
@@ -404,6 +442,25 @@ export function useFloorplan(
   }, []);
 
   /**
+   * Recalculate envelopes for all rooms
+   * Should be called after rooms are joined/positioned in assembly mode
+   */
+  const recalculateAllEnvelopes = useCallback(() => {
+    setRooms(prev => {
+      // Calculate envelopes using the latest room state
+      const envelopeMap = calculateFloorplanEnvelopes(prev);
+
+      return prev.map(room => {
+        const envelope = envelopeMap.get(room.id);
+        if (envelope) {
+          return { ...room, envelopeVertices: envelope };
+        }
+        return room;
+      });
+    });
+  }, []);
+
+  /**
    * Clear all rooms
    */
   const clearAll = useCallback(() => {
@@ -442,6 +499,8 @@ export function useFloorplan(
     gridConfig,
     geoReference,
     spacePressed,
+    defaultInteriorWallThickness,
+    defaultExteriorWallThickness,
 
     // Hooks
     viewport,
@@ -456,6 +515,7 @@ export function useFloorplan(
     getRoomById,
     getSelectedRoom,
     cloneRoom,
+    recalculateAllEnvelopes,
 
     // Clipboard operations
     copySelectedRooms,
@@ -470,6 +530,10 @@ export function useFloorplan(
     updateGridConfig,
     toggleGrid,
     toggleGridSnap,
+
+    // Wall thickness operations
+    setDefaultInteriorWallThickness,
+    setDefaultExteriorWallThickness,
 
     // GeoReference operations
     setGeoReference,

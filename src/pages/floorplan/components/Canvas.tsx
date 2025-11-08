@@ -11,6 +11,7 @@ import {
   drawGrid,
   drawRoom,
   drawWalls,
+  drawEnvelope,
   drawDrawingPreview,
   drawGuideLine,
   drawVertexHandles,
@@ -58,7 +59,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     updateRoom,
     getSelectedRoom,
     enterEditMode,
-    enterAssemblyMode
+    enterAssemblyMode,
+    recalculateAllEnvelopes
   } = floorplan;
 
   // Selection rectangle state
@@ -82,7 +84,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     updateRoom,
     gridConfig.snapEnabled,
     gridConfig.size,
-    true // roomJoiningEnabled
+    true, // roomJoiningEnabled
+    recalculateAllEnvelopes
   );
 
   // Editable dimensions hook
@@ -137,6 +140,14 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     // Draw grid
     drawGrid(ctx, viewport.viewport, gridConfig, rect.width, rect.height);
 
+    // Draw envelopes FIRST (bottom layer) - but not while ANY room is being dragged
+    const isAnyRoomDragging = editorMode === EditorMode.Assembly && assemblyMode.dragState.isDragging;
+    if (!isAnyRoomDragging) {
+      rooms.forEach(room => {
+        drawEnvelope(ctx, room, viewport.viewport);
+      });
+    }
+
     // Draw rooms
     rooms.forEach(room => {
       const isSelected = selection.isRoomSelected(room.id);
@@ -166,14 +177,14 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         strokeColor: isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#64748b'
       });
 
-      // Draw walls
-      drawWalls(ctx, room, viewport.viewport, {
-        selected: isSelected,
-        snapSegmentWorld,
-        snapMode,
-        selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
-        hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
-      });
+      // Draw walls - COMMENTED OUT: Using new trick to visualize walls
+      // drawWalls(ctx, room, viewport.viewport, {
+      //   selected: isSelected,
+      //   snapSegmentWorld,
+      //   snapMode,
+      //   selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
+      //   hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
+      // });
 
       // Draw dimension labels if enabled
       if (showDimensions) {

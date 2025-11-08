@@ -22,7 +22,9 @@ const WALL_TYPE_LABELS: Record<WallType, string> = {
   'interior_structural': 'Interior Structural',
   'interior_partition': 'Interior Partition',
   'terrain_contact': 'Terrain Contact',
-  'adiabatic': 'Adiabatic'
+  'adiabatic': 'Adiabatic',
+  'neighbor_same_block': 'Neighbor Same Block',
+  'neighbor_other_block': 'Neighbor Other Block'
 };
 
 const WALL_TYPE_DESCRIPTIONS: Record<WallType, string> = {
@@ -31,7 +33,9 @@ const WALL_TYPE_DESCRIPTIONS: Record<WallType, string> = {
   'interior_structural': 'Load-bearing interior wall',
   'interior_partition': 'Non-structural partition',
   'terrain_contact': 'Wall in contact with ground',
-  'adiabatic': 'No heat transfer (adjacent heated space)'
+  'adiabatic': 'No heat transfer (adjacent heated space)',
+  'neighbor_same_block': 'Shared wall with neighbor in same building',
+  'neighbor_other_block': 'Shared wall with neighbor in different building'
 };
 
 export function WallPropertiesPanel({
@@ -101,6 +105,12 @@ export function WallPropertiesPanel({
     const updatedApertures = [...localApertures, newAperture];
     setLocalApertures(updatedApertures);
     onUpdateWallApertures(wallIndex, updatedApertures);
+
+    // Auto-assign exterior wall type when adding a window
+    if (type === 'window' && localWallType !== 'exterior') {
+      setLocalWallType('exterior');
+      onUpdateWallType(wallIndex, 'exterior');
+    }
   };
 
   const removeAperture = (apertureId: string) => {

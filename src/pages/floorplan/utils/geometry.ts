@@ -2,7 +2,9 @@
  * Basic geometry utility functions
  */
 
-import { Vertex } from '../types';
+import { Vertex, Room } from '../types';
+import { getWallQuad } from './walls';
+import polygonClipping from 'polygon-clipping';
 
 /**
  * Calculate distance between two points
@@ -315,4 +317,202 @@ export function polygonIntersectsRectangle(
   }
 
   return false;
+}
+
+
+/**
+ * Offset a polygon outward by a given distance
+ * Similar to calculateCenterline but for any polygon
+ */
+function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number): Vertex[] {
+  const n = vertices.length;
+  if (n < 3) return vertices;
+
+  // Create offset lines for each edge
+  const offsetLines: { start: Vertex; end: Vertex }[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const p1 = vertices[i];
+    const p2 = vertices[(i + 1) % n];
+
+    // Edge vector
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+
+    if (length === 0) continue;
+
+    // Perpendicular outward (for CCW polygon, right-hand normal)
+    const normalX = dy / length;
+    const normalY = -dx / length;
+
+    // Offset line
+    offsetLines.push({
+      start: {
+        x: p1.x + normalX * offsetDistance,
+        y: p1.y + normalY * offsetDistance
+      },
+      end: {
+        x: p2.x + normalX * offsetDistance,
+        y: p2.y + normalY * offsetDistance
+      }
+    });
+  }
+
+  // Find intersections of adjacent offset lines (mitered corners)
+  const offsetVertices: Vertex[] = [];
+  for (let i = 0; i < offsetLines.length; i++) {
+    const line1 = offsetLines[i];
+    const line2 = offsetLines[(i + 1) % offsetLines.length];
+
+    // Find intersection using determinant method
+    const det = (line1.end.x - line1.start.x) * (line2.end.y - line2.start.y) -
+                (line1.end.y - line1.start.y) * (line2.end.x - line2.start.x);
+
+    if (Math.abs(det) > 0.001) {
+      const t1 = ((line2.start.x - line1.start.x) * (line2.end.y - line2.start.y) -
+                  (line2.start.y - line1.start.y) * (line2.end.x - line2.start.x)) / det;
+
+      const intersection = {
+        x: line1.start.x + t1 * (line1.end.x - line1.start.x),
+        y: line1.start.y + t1 * (line1.end.y - line1.start.y)
+      };
+
+      offsetVertices.push(intersection);
+    } else {
+      // Parallel lines - use midpoint
+      offsetVertices.push({
+        x: (line1.end.x + line2.start.x) / 2,
+        y: (line1.end.y + line2.start.y) / 2
+      });
+    }
+  }
+
+  return offsetVertices;
+}
+
+/**
+ * Calculate envelope polygons for all rooms using polygon clipping
+ * Connected rooms will merge into one envelope, disconnected rooms get separate envelopes
+ * Returns a Map of room ID to their envelope vertices (in local coordinates)
+ */
+export function calculateFloorplanEnvelopes(
+  rooms: Room[]
+): Map<string, Vertex[]> {
+  const envelopeMap = new Map<string, Vertex[]>();
+
+  if (rooms.length === 0) {
+    return envelopeMap;
+  }
+
+  // Transform helpers
+  const localToWorld = (v: Vertex, position: Vertex, rotation: number, scale: number): Vertex => {
+    const scaled = { x: v.x * scale, y: v.y * scale };
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const rotated = {
+      x: scaled.x * cos - scaled.y * sin,
+      y: scaled.x * sin + scaled.y * cos
+    };
+    return {
+      x: rotated.x + position.x,
+      y: rotated.y + position.y
+    };
+  };
+
+  const worldToLocal = (v: Vertex, position: Vertex, rotation: number, scale: number): Vertex => {
+    // Reverse translation
+    const translated = {
+      x: v.x - position.x,
+      y: v.y - position.y
+    };
+    // Reverse rotation
+    const cos = Math.cos(-rotation);
+    const sin = Math.sin(-rotation);
+    const rotated = {
+      x: translated.x * cos - translated.y * sin,
+      y: translated.x * sin + translated.y * cos
+    };
+    // Reverse scale
+    return {
+      x: rotated.x / scale,
+      y: rotated.y / scale
+    };
+  };
+
+  // Collect centerline polygons from all rooms IN WORLD COORDINATES
+  const allRoomPolygons: polygonClipping.Polygon[] = [];
+
+  for (const room of rooms) {
+    // Transform centerline vertices to WORLD coordinates
+    const worldVertices = room.centerlineVertices.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+
+    // Convert to polygon-clipping format: [[[x, y], [x, y], ...]]
+    const coords = worldVertices.map(v => [v.x, v.y] as [number, number]);
+    coords.push(coords[0]); // Close the polygon
+
+    const polygon: polygonClipping.Polygon = [coords];
+    allRoomPolygons.push(polygon);
+  }
+
+  // If no rooms, return empty envelopes
+  if (allRoomPolygons.length === 0) {
+    return envelopeMap;
+  }
+
+  // Merge all room polygons using union
+  let mergedPolygon = allRoomPolygons[0];
+  for (let i = 1; i < allRoomPolygons.length; i++) {
+    mergedPolygon = polygonClipping.union(mergedPolygon, allRoomPolygons[i]);
+  }
+
+  // The result is a MultiPolygon (array of polygons)
+  // Each polygon represents a disconnected group of rooms
+  const multiPolygon = mergedPolygon;
+
+  // For each polygon in the MultiPolygon, find which rooms belong to it
+  for (const polygon of multiPolygon) {
+    // Get the outer ring (first ring) of this polygon
+    const outerRing = polygon[0];
+
+    // Convert back to Vertex[] format (world coordinates)
+    let envelopeVerticesWorld: Vertex[] = outerRing
+      .slice(0, -1) // Remove the duplicate closing point
+      .map(coord => ({ x: coord[0], y: coord[1] }));
+
+    // Inflate the envelope outward by half wall thickness (15cm default)
+    // This offsets from centerline to outer edge
+    const inflationDistance = 15; // cm - half of typical 30cm exterior wall
+    envelopeVerticesWorld = offsetPolygonOutward(envelopeVerticesWorld, inflationDistance);
+
+    // Find which rooms belong to this envelope
+    // A room belongs to an envelope if its centroid is inside the envelope
+    for (const room of rooms) {
+      // Get room centroid in world coordinates
+      const roomCentroidLocal = polygonCentroid(room.vertices);
+      const roomCentroidWorld = localToWorld(roomCentroidLocal, room.position, room.rotation, room.scale);
+
+      if (pointInPolygon(roomCentroidWorld, envelopeVerticesWorld)) {
+        // Convert envelope from world to local coordinates for this room
+        const envelopeVerticesLocal = envelopeVerticesWorld.map(v =>
+          worldToLocal(v, room.position, room.rotation, room.scale)
+        );
+        envelopeMap.set(room.id, envelopeVerticesLocal);
+      }
+    }
+  }
+
+  // Fallback: if a room wasn't assigned to any envelope, give it its own
+  for (const room of rooms) {
+    if (!envelopeMap.has(room.id)) {
+      // Inflate the room's centerline vertices to get outer edge
+      const inflationDistance = 15; // cm - half of typical 30cm exterior wall
+      const inflatedEnvelope = offsetPolygonOutward(room.centerlineVertices, inflationDistance);
+      envelopeMap.set(room.id, inflatedEnvelope);
+    }
+  }
+
+  return envelopeMap;
 }

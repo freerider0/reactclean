@@ -56,7 +56,9 @@ export type WallType =
   | 'interior_structural'
   | 'interior_partition'
   | 'terrain_contact'
-  | 'adiabatic';
+  | 'adiabatic'
+  | 'neighbor_same_block'
+  | 'neighbor_other_block';
 
 export interface Aperture {
   id: string;
@@ -85,8 +87,10 @@ export interface Room {
   name: string;
 
   // Geometry (local coordinates)
-  vertices: Vertex[];
+  vertices: Vertex[];  // Inner floor boundary
+  centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness)
   walls: Wall[];
+  envelopeVertices?: Vertex[];  // Outer boundary from polygon merging
 
   // Assembly transform (world coordinates)
   position: Vertex;

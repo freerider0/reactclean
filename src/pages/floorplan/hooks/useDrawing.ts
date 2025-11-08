@@ -8,6 +8,7 @@ import { Vertex, DrawingState, GuideLine, GridConfig, Room } from '../types';
 import { snapToGrid, snapOrthogonal, snapWithPriority } from '../utils/snapping';
 import { distance, isSelfIntersecting, isCounterClockwise, centerVertices } from '../utils/geometry';
 import { generateWalls } from '../utils/walls';
+import { calculateCenterline } from '../utils/roomJoining';
 
 const CLOSE_THRESHOLD = 10; // Distance to first vertex to close polygon (in cm)
 const MIN_VERTICES = 3;
@@ -55,10 +56,21 @@ export function useDrawing(
     // Generate walls from centered vertices
     const walls = generateWalls(centeredVertices, wallThickness);
 
+    // Create temporary room object to calculate centerline
+    const tempRoom = {
+      vertices: centeredVertices,
+      wallThickness,
+      walls
+    };
+
+    // Calculate centerline vertices
+    const centerlineVertices = calculateCenterline(tempRoom as Room);
+
     // Create room with centered vertices and centroid as position
     const newRoom: Omit<Room, 'id'> = {
       name: `Room ${Date.now()}`,
       vertices: centeredVertices,
+      centerlineVertices,
       walls,
       position: centroid, // Position is the centroid
       rotation: 0,

@@ -16,7 +16,8 @@ export function useAssemblyMode(
   updateRoom: (roomId: string, updates: Partial<Room>) => void,
   gridSnapEnabled: boolean,
   gridSize: number,
-  roomJoiningEnabled: boolean = true
+  roomJoiningEnabled: boolean = true,
+  recalculateAllEnvelopes?: () => void
 ) {
   const [dragState, setDragState] = useState<DragState>({
     isDragging: false,
@@ -174,7 +175,13 @@ export function useAssemblyMode(
     setAssemblyGuideLines([]);
     setLastSnapResult(null);
     dragStartRef.current = null;
-  }, [roomJoiningEnabled, lastSnapResult, dragState, rooms, updateRoom]);
+
+    // Recalculate envelopes after EVERY drag end
+    if (recalculateAllEnvelopes) {
+      // Use setTimeout to ensure state updates complete first
+      setTimeout(() => recalculateAllEnvelopes(), 0);
+    }
+  }, [roomJoiningEnabled, lastSnapResult, dragState, rooms, updateRoom, recalculateAllEnvelopes]);
 
   // Store original rotation for relative dragging
   const originalRotationRef = useRef<number>(0);

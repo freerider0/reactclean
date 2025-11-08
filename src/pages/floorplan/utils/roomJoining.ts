@@ -153,8 +153,8 @@ function lineIntersection(
  * Get room segments from centerline
  */
 function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
-  // Calculate centerline if not cached
-  const centerline = calculateCenterline(room);
+  // Use stored centerline vertices
+  const centerline = room.centerlineVertices;
 
   // Transform to world coordinates
   const worldVertices = centerline.map(v =>
