@@ -90,7 +90,8 @@ export interface Room {
   vertices: Vertex[];  // Inner floor boundary
   centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness)
   walls: Wall[];
-  envelopeVertices?: Vertex[];  // Outer boundary from polygon merging
+  envelopeVertices?: Vertex[];  // Outer boundary from polygon merging (inflated)
+  debugMergedCenterline?: Vertex[];  // DEBUG: Merged centerline before inflation
 
   // Assembly transform (world coordinates)
   position: Vertex;

@@ -3,7 +3,7 @@
  * Replaces the ECS World and manages all state
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Room, EditorMode, ToolMode, GridConfig } from '../types';
 import type { GeoReference } from '../types/geo';
 import { useViewport } from './useViewport';
@@ -39,6 +39,12 @@ export function useFloorplan(
 
   // Rooms state
   const [rooms, setRooms] = useState<Room[]>([]);
+  const roomsRef = useRef<Room[]>([]);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
 
   // History for undo/redo
   const history = useHistory<Room[]>([], 50);
@@ -109,18 +115,24 @@ export function useFloorplan(
    * Update a room
    */
   const updateRoom = useCallback((roomId: string, updates: Partial<Room>) => {
-    setRooms(prev => prev.map(room => {
-      if (room.id !== roomId) return room;
+    setRooms(prev => {
+      const updated = prev.map(room => {
+        if (room.id !== roomId) return room;
 
-      const updatedRoom = { ...room, ...updates };
+        const updatedRoom = { ...room, ...updates };
 
-      // Recalculate centerlineVertices if vertices or wallThickness changed
-      if (updates.vertices || updates.wallThickness || updates.walls) {
-        updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
-      }
+        // Recalculate centerlineVertices if vertices or wallThickness changed
+        if (updates.vertices || updates.wallThickness || updates.walls) {
+          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+        }
 
-      return updatedRoom;
-    }));
+        return updatedRoom;
+      });
+
+      // Also update ref immediately for synchronous access
+      roomsRef.current = updated;
+      return updated;
+    });
   }, []);
 
   /**
@@ -445,19 +457,26 @@ export function useFloorplan(
    * Recalculate envelopes for all rooms
    * Should be called after rooms are joined/positioned in assembly mode
    */
-  const recalculateAllEnvelopes = useCallback(() => {
-    setRooms(prev => {
-      // Calculate envelopes using the latest room state
-      const envelopeMap = calculateFloorplanEnvelopes(prev);
+  const recalculateAllEnvelopes = useCallback(async () => {
+    // Use ref to get the absolute latest room state (even if setState hasn't flushed)
+    const currentRooms = roomsRef.current;
+    console.log('🔄 Recalculating envelopes for', currentRooms.length, 'rooms');
 
-      return prev.map(room => {
-        const envelope = envelopeMap.get(room.id);
-        if (envelope) {
-          return { ...room, envelopeVertices: envelope };
-        }
-        return room;
-      });
-    });
+    // Calculate envelopes using the latest room state (async with Clipper WebAssembly)
+    const envelopeMap = await calculateFloorplanEnvelopes(currentRooms);
+
+    // Update rooms with envelope data
+    setRooms(prev => prev.map(room => {
+      const result = envelopeMap.get(room.id);
+      if (result) {
+        return {
+          ...room,
+          envelopeVertices: result.envelope,
+          debugMergedCenterline: result.debugCenterline
+        };
+      }
+      return room;
+    }));
   }, []);
 
   /**

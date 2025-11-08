@@ -4,7 +4,77 @@
 
 import { Vertex, Room } from '../types';
 import { getWallQuad } from './walls';
-import polygonClipping from 'polygon-clipping';
+import {
+  loadNativeClipperLibInstanceAsync,
+  NativeClipperLibInstance,
+  NativeClipperLibRequestedFormat,
+  ClipType,
+  PolyFillType,
+  JoinType,
+  EndType,
+  IntPoint,
+  Paths
+} from 'js-angusj-clipper/web';
+
+// ============================================================================
+// CLIPPER INSTANCE INITIALIZATION
+// ============================================================================
+
+let clipperInstance: NativeClipperLibInstance | null = null;
+
+/**
+ * Get or initialize the Clipper library instance
+ * Uses WebAssembly only (modern browsers)
+ */
+async function getClipperInstance(): Promise<NativeClipperLibInstance> {
+  if (!clipperInstance) {
+    clipperInstance = await loadNativeClipperLibInstanceAsync(
+      NativeClipperLibRequestedFormat.WasmOnly
+    );
+  }
+  return clipperInstance;
+}
+
+// ============================================================================
+// COORDINATE CONVERSION (Float ↔ Integer)
+// ============================================================================
+
+const COORD_SCALE = 100; // Scale factor: 1cm = 100 units for precision
+
+/**
+ * Convert Vertex (float) to IntPoint (integer)
+ * Clipper requires integer coordinates with lowercase x, y
+ */
+function vertexToIntPoint(v: Vertex): IntPoint {
+  return {
+    x: Math.round(v.x * COORD_SCALE),
+    y: Math.round(v.y * COORD_SCALE)
+  };
+}
+
+/**
+ * Convert IntPoint (integer) back to Vertex (float)
+ */
+function intPointToVertex(p: IntPoint): Vertex {
+  return {
+    x: p.x / COORD_SCALE,
+    y: p.y / COORD_SCALE
+  };
+}
+
+/**
+ * Convert array of Vertices to Path (array of IntPoints)
+ */
+function verticesToPath(vertices: Vertex[]): IntPoint[] {
+  return vertices.map(vertexToIntPoint);
+}
+
+/**
+ * Convert Path (array of IntPoints) back to Vertices
+ */
+function pathToVertices(path: IntPoint[]): Vertex[] {
+  return path.map(intPointToVertex);
+}
 
 /**
  * Calculate distance between two points
@@ -321,89 +391,100 @@ export function polygonIntersectsRectangle(
 
 
 /**
- * Offset a polygon outward by a given distance
- * Similar to calculateCenterline but for any polygon
+ * Remove collinear vertices from a polygon
+ * Keeps only vertices that represent actual direction changes
  */
-function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number): Vertex[] {
-  const n = vertices.length;
-  if (n < 3) return vertices;
+function removeCollinearVertices(vertices: Vertex[], tolerance: number = 0.01): Vertex[] {
+  if (vertices.length < 3) return vertices;
 
-  // Create offset lines for each edge
-  const offsetLines: { start: Vertex; end: Vertex }[] = [];
+  const result: Vertex[] = [];
 
-  for (let i = 0; i < n; i++) {
-    const p1 = vertices[i];
-    const p2 = vertices[(i + 1) % n];
+  for (let i = 0; i < vertices.length; i++) {
+    const prev = vertices[(i - 1 + vertices.length) % vertices.length];
+    const curr = vertices[i];
+    const next = vertices[(i + 1) % vertices.length];
 
-    // Edge vector
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const length = Math.sqrt(dx * dx + dy * dy);
+    // Calculate vectors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
 
-    if (length === 0) continue;
+    // Cross product to detect collinearity
+    // If cross product is near zero, points are collinear
+    const cross = Math.abs(v1x * v2y - v1y * v2x);
 
-    // Perpendicular outward (for CCW polygon, right-hand normal)
-    const normalX = dy / length;
-    const normalY = -dx / length;
+    // Normalize by edge lengths to get angle-based tolerance
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
 
-    // Offset line
-    offsetLines.push({
-      start: {
-        x: p1.x + normalX * offsetDistance,
-        y: p1.y + normalY * offsetDistance
-      },
-      end: {
-        x: p2.x + normalX * offsetDistance,
-        y: p2.y + normalY * offsetDistance
-      }
-    });
-  }
+    if (len1 === 0 || len2 === 0) {
+      // Degenerate edge, skip this vertex
+      continue;
+    }
 
-  // Find intersections of adjacent offset lines (mitered corners)
-  const offsetVertices: Vertex[] = [];
-  for (let i = 0; i < offsetLines.length; i++) {
-    const line1 = offsetLines[i];
-    const line2 = offsetLines[(i + 1) % offsetLines.length];
+    const normalizedCross = cross / (len1 * len2);
 
-    // Find intersection using determinant method
-    const det = (line1.end.x - line1.start.x) * (line2.end.y - line2.start.y) -
-                (line1.end.y - line1.start.y) * (line2.end.x - line2.start.x);
-
-    if (Math.abs(det) > 0.001) {
-      const t1 = ((line2.start.x - line1.start.x) * (line2.end.y - line2.start.y) -
-                  (line2.start.y - line1.start.y) * (line2.end.x - line2.start.x)) / det;
-
-      const intersection = {
-        x: line1.start.x + t1 * (line1.end.x - line1.start.x),
-        y: line1.start.y + t1 * (line1.end.y - line1.start.y)
-      };
-
-      offsetVertices.push(intersection);
-    } else {
-      // Parallel lines - use midpoint
-      offsetVertices.push({
-        x: (line1.end.x + line2.start.x) / 2,
-        y: (line1.end.y + line2.start.y) / 2
-      });
+    // Keep vertex if it represents an actual turn
+    if (normalizedCross > tolerance) {
+      result.push(curr);
     }
   }
 
-  return offsetVertices;
+  // Ensure we have at least 3 vertices for a valid polygon
+  return result.length >= 3 ? result : vertices;
 }
 
 /**
- * Calculate envelope polygons for all rooms using polygon clipping
+ * Offset a polygon outward using Clipper with sharp mitered corners
+ * Uses WebAssembly for production-ready performance
+ */
+async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number): Promise<Vertex[]> {
+  if (vertices.length < 3) return vertices;
+
+  const clipper = await getClipperInstance();
+
+  // Convert vertices to integer path
+  const path = verticesToPath(vertices);
+
+  // Scale offset distance to integer (offset is in same units as coordinates)
+  const scaledOffset = offsetDistance * COORD_SCALE;
+
+  // Perform offset with JoinType.Miter for sharp corners
+  const offsetPaths = clipper.offsetToPaths({
+    delta: scaledOffset,
+    offsetInputs: [{
+      data: [path],
+      joinType: JoinType.Miter,
+      endType: EndType.ClosedPolygon
+    }],
+    miterLimit: 2.0 // Default miter limit
+  });
+
+  // Take the first result polygon
+  if (offsetPaths.length === 0 || offsetPaths[0].length === 0) {
+    return vertices; // Fallback to original if offset fails
+  }
+
+  // Convert back to Vertex[]
+  return pathToVertices(offsetPaths[0]);
+}
+
+/**
+ * Calculate envelope polygons for all rooms using Clipper (WebAssembly)
  * Connected rooms will merge into one envelope, disconnected rooms get separate envelopes
  * Returns a Map of room ID to their envelope vertices (in local coordinates)
  */
-export function calculateFloorplanEnvelopes(
+export async function calculateFloorplanEnvelopes(
   rooms: Room[]
-): Map<string, Vertex[]> {
-  const envelopeMap = new Map<string, Vertex[]>();
+): Promise<Map<string, { envelope: Vertex[]; debugCenterline: Vertex[] }>> {
+  const envelopeMap = new Map<string, { envelope: Vertex[]; debugCenterline: Vertex[] }>();
 
   if (rooms.length === 0) {
     return envelopeMap;
   }
+
+  const clipper = await getClipperInstance();
 
   // Transform helpers
   const localToWorld = (v: Vertex, position: Vertex, rotation: number, scale: number): Vertex => {
@@ -441,51 +522,109 @@ export function calculateFloorplanEnvelopes(
   };
 
   // Collect centerline polygons from all rooms IN WORLD COORDINATES
-  const allRoomPolygons: polygonClipping.Polygon[] = [];
+  const allRoomPaths: IntPoint[][] = [];
 
   for (const room of rooms) {
+    // Remove collinear vertices to avoid clipping issues
+    const cleanedCenterline = removeCollinearVertices(room.centerlineVertices);
+
+    // Skip if not enough vertices
+    if (cleanedCenterline.length < 3) {
+      console.warn(`Room ${room.id} has less than 3 vertices after cleaning, skipping`);
+      continue;
+    }
+
     // Transform centerline vertices to WORLD coordinates
-    const worldVertices = room.centerlineVertices.map(v =>
+    const worldVertices = cleanedCenterline.map(v =>
       localToWorld(v, room.position, room.rotation, room.scale)
     );
 
-    // Convert to polygon-clipping format: [[[x, y], [x, y], ...]]
-    const coords = worldVertices.map(v => [v.x, v.y] as [number, number]);
-    coords.push(coords[0]); // Close the polygon
+    // Convert to Clipper path (integer coordinates)
+    const path = verticesToPath(worldVertices);
 
-    const polygon: polygonClipping.Polygon = [coords];
-    allRoomPolygons.push(polygon);
+    // Validate path
+    if (path.length < 3) {
+      console.warn(`Room ${room.id} path has less than 3 points, skipping`);
+      continue;
+    }
+
+    // Check for invalid coordinates
+    const hasInvalidCoords = path.some(p =>
+      !isFinite(p.x) || !isFinite(p.y) || isNaN(p.x) || isNaN(p.y)
+    );
+
+    if (hasInvalidCoords) {
+      console.warn(`Room ${room.id} has invalid coordinates, skipping`);
+      continue;
+    }
+
+    allRoomPaths.push(path);
   }
 
-  // If no rooms, return empty envelopes
-  if (allRoomPolygons.length === 0) {
+  // If no valid rooms, return empty envelopes
+  if (allRoomPaths.length === 0) {
+    console.warn('No valid room paths to merge');
     return envelopeMap;
   }
 
-  // Merge all room polygons using union
-  let mergedPolygon = allRoomPolygons[0];
-  for (let i = 1; i < allRoomPolygons.length; i++) {
-    mergedPolygon = polygonClipping.union(mergedPolygon, allRoomPolygons[i]);
+  console.log(`Merging ${allRoomPaths.length} room paths with Clipper`);
+
+  // EXPAND → UNION → CONTRACT technique
+  // Slightly expand centerlines so near-touching edges overlap, union them, then contract back
+  const EXPAND_AMOUNT = 10.0 * COORD_SCALE; // 10cm expansion
+
+  console.log(`Step 1: Expanding centerlines by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
+  const expandedPaths = clipper.offsetToPaths({
+    delta: EXPAND_AMOUNT,
+    offsetInputs: [{
+      data: allRoomPaths,
+      joinType: JoinType.Miter,
+      endType: EndType.ClosedPolygon
+    }],
+    miterLimit: 2.0
+  });
+
+  console.log(`Step 2: Union of ${expandedPaths.length} expanded paths`);
+  const mergedExpandedPaths = clipper.clipToPaths({
+    clipType: ClipType.Union,
+    subjectInputs: [{
+      data: expandedPaths,
+      closed: true
+    }],
+    subjectFillType: PolyFillType.NonZero
+  });
+
+  console.log(`Union produced ${mergedExpandedPaths.length} polygon(s)`);
+
+  console.log(`Step 3: Contracting merged polygons by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
+  const mergedPaths = clipper.offsetToPaths({
+    delta: -EXPAND_AMOUNT,
+    offsetInputs: [{
+      data: mergedExpandedPaths,
+      joinType: JoinType.Miter,
+      endType: EndType.ClosedPolygon
+    }],
+    miterLimit: 2.0
+  });
+
+  console.log(`Final result: ${mergedPaths.length} merged polygon(s)`);
+
+  if (mergedPaths.length < allRoomPaths.length) {
+    console.log(`✅ Rooms merged: ${allRoomPaths.length} rooms → ${mergedPaths.length} polygon(s)`);
+  } else {
+    console.warn(`⚠️ No merge occurred - rooms may not have touching edges`);
   }
 
-  // The result is a MultiPolygon (array of polygons)
-  // Each polygon represents a disconnected group of rooms
-  const multiPolygon = mergedPolygon;
-
-  // For each polygon in the MultiPolygon, find which rooms belong to it
-  for (const polygon of multiPolygon) {
-    // Get the outer ring (first ring) of this polygon
-    const outerRing = polygon[0];
-
-    // Convert back to Vertex[] format (world coordinates)
-    let envelopeVerticesWorld: Vertex[] = outerRing
-      .slice(0, -1) // Remove the duplicate closing point
-      .map(coord => ({ x: coord[0], y: coord[1] }));
+  // The result is an array of paths (disconnected polygons)
+  // Each path represents a disconnected group of rooms
+  for (const path of mergedPaths) {
+    // Convert path back to Vertex[] format (world coordinates)
+    const mergedCenterlineWorld = pathToVertices(path);
 
     // Inflate the envelope outward by half wall thickness (15cm default)
     // This offsets from centerline to outer edge
     const inflationDistance = 15; // cm - half of typical 30cm exterior wall
-    envelopeVerticesWorld = offsetPolygonOutward(envelopeVerticesWorld, inflationDistance);
+    const envelopeVerticesWorld = await offsetPolygonOutward(mergedCenterlineWorld, inflationDistance);
 
     // Find which rooms belong to this envelope
     // A room belongs to an envelope if its centroid is inside the envelope
@@ -499,7 +638,16 @@ export function calculateFloorplanEnvelopes(
         const envelopeVerticesLocal = envelopeVerticesWorld.map(v =>
           worldToLocal(v, room.position, room.rotation, room.scale)
         );
-        envelopeMap.set(room.id, envelopeVerticesLocal);
+
+        // Convert merged centerline from world to local coordinates
+        const debugCenterlineLocal = mergedCenterlineWorld.map(v =>
+          worldToLocal(v, room.position, room.rotation, room.scale)
+        );
+
+        envelopeMap.set(room.id, {
+          envelope: envelopeVerticesLocal,
+          debugCenterline: debugCenterlineLocal
+        });
       }
     }
   }
@@ -507,10 +655,17 @@ export function calculateFloorplanEnvelopes(
   // Fallback: if a room wasn't assigned to any envelope, give it its own
   for (const room of rooms) {
     if (!envelopeMap.has(room.id)) {
+      // Remove collinear vertices before processing
+      const cleanedCenterline = removeCollinearVertices(room.centerlineVertices);
+
       // Inflate the room's centerline vertices to get outer edge
       const inflationDistance = 15; // cm - half of typical 30cm exterior wall
-      const inflatedEnvelope = offsetPolygonOutward(room.centerlineVertices, inflationDistance);
-      envelopeMap.set(room.id, inflatedEnvelope);
+      const inflatedEnvelope = await offsetPolygonOutward(cleanedCenterline, inflationDistance);
+
+      envelopeMap.set(room.id, {
+        envelope: inflatedEnvelope,
+        debugCenterline: cleanedCenterline
+      });
     }
   }
 

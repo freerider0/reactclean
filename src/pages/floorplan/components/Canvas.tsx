@@ -75,7 +75,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     getSelectedRoom(),
     updateRoom,
     gridConfig.snapEnabled,
-    gridConfig.size
+    gridConfig.size,
+    recalculateAllEnvelopes
   );
 
   // Assembly mode hook
@@ -177,14 +178,16 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         strokeColor: isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#64748b'
       });
 
-      // Draw walls - COMMENTED OUT: Using new trick to visualize walls
-      // drawWalls(ctx, room, viewport.viewport, {
-      //   selected: isSelected,
-      //   snapSegmentWorld,
-      //   snapMode,
-      //   selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
-      //   hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
-      // });
+      // Draw walls only while dragging (for UI guidance)
+      if (isAnyRoomDragging) {
+        drawWalls(ctx, room, viewport.viewport, {
+          selected: isSelected,
+          snapSegmentWorld,
+          snapMode,
+          selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
+          hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
+        });
+      }
 
       // Draw dimension labels if enabled
       if (showDimensions) {

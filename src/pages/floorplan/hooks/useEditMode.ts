@@ -17,7 +17,8 @@ export function useEditMode(
   selectedRoom: Room | null,
   updateRoom: (roomId: string, updates: Partial<Room>) => void,
   gridSnapEnabled: boolean,
-  gridSize: number
+  gridSize: number,
+  recalculateAllEnvelopes?: () => Promise<void>
 ) {
   const [dragState, setDragState] = useState<DragState>({
     isDragging: false,
@@ -158,13 +159,17 @@ export function useEditMode(
       };
 
       // Solve constraints (fix the dragged vertex so it stays where user put it)
-      solveRoom(tempRoom, vertexIndex).then(solvedRoom => {
+      solveRoom(tempRoom, vertexIndex).then(async solvedRoom => {
         updateRoom(selectedRoom.id, {
           vertices: solvedRoom.vertices,
           walls: solvedRoom.walls,
           position: newPosition,
           primitives: solvedRoom.primitives
         });
+        // Recalculate envelopes immediately after vertex update
+        if (recalculateAllEnvelopes) {
+          await recalculateAllEnvelopes();
+        }
       }).catch(error => {
         console.error('Error solving during vertex drag:', error);
         // Fallback: update without solving
@@ -173,6 +178,10 @@ export function useEditMode(
           walls: newWalls,
           position: newPosition
         });
+        // Recalculate envelopes even on fallback
+        if (recalculateAllEnvelopes) {
+          recalculateAllEnvelopes();
+        }
       });
     } else {
       // No constraints, just update normally
@@ -181,8 +190,12 @@ export function useEditMode(
         walls: newWalls,
         position: newPosition
       });
+      // Recalculate envelopes immediately after vertex update
+      if (recalculateAllEnvelopes) {
+        recalculateAllEnvelopes();
+      }
     }
-  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom]);
+  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * End vertex drag
@@ -321,7 +334,12 @@ export function useEditMode(
       walls: newWalls,
       position: newPosition
     });
-  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom]);
+
+    // Recalculate envelopes immediately after edge update
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * End edge drag
@@ -434,7 +452,12 @@ export function useEditMode(
       walls: newWalls,
       position: newPosition
     });
-  }, [selectedRoom, updateRoom, findClosestEdgeIndex]);
+
+    // Recalculate envelopes after adding vertex
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, updateRoom, findClosestEdgeIndex, recalculateAllEnvelopes]);
 
   /**
    * Add vertex to specific edge (for programmatic use)
@@ -484,7 +507,12 @@ export function useEditMode(
       walls: newWalls,
       position: newPosition
     });
-  }, [selectedRoom, updateRoom]);
+
+    // Recalculate envelopes after adding vertex
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * Start dragging a wall
@@ -611,7 +639,12 @@ export function useEditMode(
       walls: newWalls,
       position: newPosition
     });
-  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom]);
+
+    // Recalculate envelopes immediately after wall update
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * End wall drag
@@ -667,7 +700,12 @@ export function useEditMode(
       walls: newWalls,
       position: newPosition
     });
-  }, [selectedRoom, updateRoom]);
+
+    // Recalculate envelopes after deleting vertex
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, updateRoom, recalculateAllEnvelopes]);
 
   return {
     dragState,

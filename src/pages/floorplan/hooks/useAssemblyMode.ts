@@ -17,7 +17,7 @@ export function useAssemblyMode(
   gridSnapEnabled: boolean,
   gridSize: number,
   roomJoiningEnabled: boolean = true,
-  recalculateAllEnvelopes?: () => void
+  recalculateAllEnvelopes?: () => Promise<void>
 ) {
   const [dragState, setDragState] = useState<DragState>({
     isDragging: false,
@@ -178,8 +178,8 @@ export function useAssemblyMode(
 
     // Recalculate envelopes after EVERY drag end
     if (recalculateAllEnvelopes) {
-      // Use setTimeout to ensure state updates complete first
-      setTimeout(() => recalculateAllEnvelopes(), 0);
+      // Use setTimeout to ensure state updates complete first, then await async envelope calculation
+      setTimeout(async () => await recalculateAllEnvelopes(), 0);
     }
   }, [roomJoiningEnabled, lastSnapResult, dragState, rooms, updateRoom, recalculateAllEnvelopes]);
 

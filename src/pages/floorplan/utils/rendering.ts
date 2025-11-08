@@ -55,6 +55,28 @@ export function drawEnvelope(
   ctx.fill();
   ctx.stroke();
 
+  // DEBUG: Draw merged centerline result (before inflation) as pink dashed
+  if (room.debugMergedCenterline && room.debugMergedCenterline.length >= 3) {
+    const worldCenterline = room.debugMergedCenterline.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+    const screenCenterline = worldCenterline.map(v => worldToScreen(v, viewport));
+
+    ctx.strokeStyle = '#ec4899'; // Pink
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]); // Dashed line
+
+    ctx.beginPath();
+    ctx.moveTo(screenCenterline[0].x, screenCenterline[0].y);
+    for (let i = 1; i < screenCenterline.length; i++) {
+      ctx.lineTo(screenCenterline[i].x, screenCenterline[i].y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.setLineDash([]); // Reset dash
+  }
+
   ctx.restore();
 }
 
