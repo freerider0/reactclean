@@ -19,7 +19,7 @@ export function ModeSelectorBar({ mode, setMode, canEdit, onCalculateWalls }: Mo
         {/* Draw/Add Room Mode */}
         <button
           onClick={() => setMode(EditorMode.Draw)}
-          className={`px-4 py-2 text-sm font-medium transition-all ${
+          className={`px-4 py-2 text-sm font-medium transition-all focus:outline-none ${
             mode === EditorMode.Draw
               ? 'bg-green-500 text-white'
               : 'text-gray-700 hover:bg-gray-50'

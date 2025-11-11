@@ -68,6 +68,12 @@ export interface Aperture {
   width: number;     // Width in meters
   height: number;    // Height in meters
   sillHeight?: number; // Sill height for windows in meters
+  // Material properties (defaults from config.apertureDefaults)
+  cristal?: GlassType;
+  color?: WindowColor;
+  material?: WindowMaterial;
+  persiana?: boolean;
+  porcentajeMarco?: number; // Frame percentage (uses porcentajeMarcoVentana or porcentajeMarcoPuerta from defaults)
 }
 
 export interface Wall {
@@ -165,6 +171,20 @@ export interface GuideLine {
 // FLOORPLAN CONFIG
 // ============================================================================
 
+// Aperture configuration types
+export type GlassType = 'simple' | 'doble' | 'triple';
+export type WindowColor = 'azul' | 'blanco' | 'verde';
+export type WindowMaterial = 'madera' | 'pvc' | 'aluminio' | 'aluminio_puente_termico';
+
+export interface ApertureDefaults {
+  cristal: GlassType;
+  color: WindowColor;
+  material: WindowMaterial;
+  persiana: boolean;
+  porcentajeMarcoVentana: number; // Porcentaje del marco respecto al cristal (ventanas)
+  porcentajeMarcoPuerta: number;  // Porcentaje del marco respecto al cristal (puertas)
+}
+
 export interface FloorplanConfig {
   // Grid settings
   enabled: boolean;
@@ -183,8 +203,14 @@ export interface FloorplanConfig {
   defaultInteriorWallThickness: number; // Default interior wall thickness in cm
   defaultExteriorWallThickness: number; // Default exterior wall thickness in cm
 
+  // Aperture settings
+  apertureDefaults?: ApertureDefaults; // Default aperture properties
+
   // Rendering settings
   miterLimit?: number; // Clipper miter limit (1.0-10.0), controls when beveling occurs
+
+  // UI settings
+  menuOpenByDefault?: boolean; // Show tools menu open on load
 }
 
 // Legacy type alias for backwards compatibility
@@ -211,10 +237,14 @@ export interface SelectionState {
   selectedVertexIndex: number | null;
   selectedEdgeIndex: number | null;
   selectedWallIndex: number | null;
+  selectedApertureId: string | null;
+  selectedApertureWallIndex: number | null;
   hoverRoomId: string | null;
   hoverVertexIndex: number | null;
   hoverEdgeIndex: number | null;
   hoverWallIndex: number | null;
+  hoverApertureId: string | null;
+  hoverApertureWallIndex: number | null;
 }
 
 export interface SelectionRectangleState {

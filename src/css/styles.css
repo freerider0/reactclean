@@ -29,3 +29,64 @@
 /** Dark/Light Theme Variant **/
 @custom-variant dark (&:is(.dark *));
 @custom-variant light (&:not(.dark *));
+
+/* Drilldown Menu Animations */
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-out-left {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes slide-out-right {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.2s ease-out;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.2s ease-out;
+}
+
+.animate-slide-out-left {
+  animation: slide-out-left 0.2s ease-out;
+}
+
+.animate-slide-out-right {
+  animation: slide-out-right 0.2s ease-out;
+}

@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Room, WallType, Aperture } from '../../types';
+import { Room, WallType, Aperture, FloorplanConfig } from '../../types';
 
 interface WallPropertiesPanelProps {
   room: Room;
   wallIndex: number;
+  config: FloorplanConfig;
   onUpdateWallThickness: (wallIndex: number, thickness: number) => void;
   onUpdateWallType: (wallIndex: number, wallType: WallType) => void;
   onUpdateWallHeight: (wallIndex: number, height: number) => void;
@@ -41,6 +42,7 @@ const WALL_TYPE_DESCRIPTIONS: Record<WallType, string> = {
 export function WallPropertiesPanel({
   room,
   wallIndex,
+  config,
   onUpdateWallThickness,
   onUpdateWallType,
   onUpdateWallHeight,
@@ -105,7 +107,13 @@ export function WallPropertiesPanel({
       distance: lengthM / 2 - (type === 'door' ? 0.45 : 0.6), // Center the aperture
       width: type === 'door' ? 0.9 : 1.2, // 90cm door, 120cm window
       height: type === 'door' ? 2.1 : 1.2, // 210cm door, 120cm window
-      sillHeight: type === 'window' ? 0.9 : undefined // 90cm sill for windows
+      sillHeight: type === 'window' ? 0.9 : undefined, // 90cm sill for windows
+      // Material properties are undefined by default - will inherit from config at runtime
+      cristal: undefined,
+      color: undefined,
+      material: undefined,
+      persiana: undefined,
+      porcentajeMarco: undefined
     };
 
     // Use wall.apertures directly (no local state for apertures)
@@ -276,13 +284,13 @@ export function WallPropertiesPanel({
           <div className="flex gap-2 mb-3">
             <button
               onClick={() => startPlacingAperture('door')}
-              className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+              className="flex-1 px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 focus:outline-none"
             >
               + Add Door
             </button>
             <button
               onClick={() => startPlacingAperture('window')}
-              className="flex-1 px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600"
+              className="flex-1 px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 focus:outline-none"
             >
               + Add Window
             </button>

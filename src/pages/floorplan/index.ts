@@ -1,12 +1,9 @@
 /**
- * Floorplan editor - Clean React-first architecture
- * No ECS, no global stores, just React hooks and pure functions
+ * Floorplan editor - Clean architecture with Zustand store
+ * Centralized state management with pure utility functions
  */
 
 export { FloorplanPage } from './FloorplanPage';
-export { useFloorplan } from './hooks/useFloorplan';
-export { useViewport } from './hooks/useViewport';
-export { useDrawing } from './hooks/useDrawing';
-export { useSelection } from './hooks/useSelection';
+export { useFloorplanStore } from './store/floorplanStore';
 
 export * from './types';

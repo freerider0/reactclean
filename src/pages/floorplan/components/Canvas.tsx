@@ -3,8 +3,9 @@
  * Handles rendering and user interactions
  */
 
-import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { EditorMode, ToolMode, Vertex, SelectionRectangleState } from '../types';
+import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { shallow } from 'zustand/shallow';
+import { EditorMode, ToolMode, Vertex, SelectionRectangleState, Room } from '../types';
 import { screenToWorld, worldToScreen, localToWorld, worldToLocal } from '../utils/coordinates';
 import {
   clearCanvas,
@@ -32,41 +33,98 @@ import {
   hitTestExternalWalls,
   hitTestRoom,
   findBestHit,
-  hitTestRotationHandle
+  hitTestRotationHandle,
+  hitTestApertures
 } from '../utils/hitTesting';
-import { polygonIntersectsRectangle, pointInPolygon } from '../utils/geometry';
-import { useFloorplan } from '../hooks/useFloorplan';
-import { useEditMode } from '../hooks/useEditMode';
-import { useAssemblyMode } from '../hooks/useAssemblyMode';
+import { polygonIntersectsRectangle, pointInPolygon, distance } from '../utils/geometry';
+import { snapWithPriority } from '../utils/snapping';
+import { generateWalls } from '../utils/walls';
+import { useFloorplanStore, selectAllRooms } from '../store/floorplanStore';
 import { useEditableDimensions } from '../hooks/useEditableDimensions';
 import { UseConstraintsResult } from '../hooks/useConstraints';
 import { DimensionInput } from './ui/DimensionInput';
+import {
+  EditDragState,
+  calculateVertexDrag,
+  calculateEdgeDrag,
+  calculateWallDrag,
+  calculateAddVertexToEdge,
+  calculateDeleteVertex,
+  createVertexDragState,
+  createEdgeDragState,
+  createWallDragState,
+  isDragThresholdExceeded as isEditDragThresholdExceeded,
+  DRAG_THRESHOLD as EDIT_DRAG_THRESHOLD
+} from '../utils/editing';
+import {
+  AssemblyDragState,
+  calculateRoomDragPosition,
+  calculateFinalRoomSnap,
+  calculateRoomRotation,
+  createRoomDragState,
+  createRotationDragState,
+  isDragThresholdExceeded as isAssemblyDragThresholdExceeded,
+  DRAG_THRESHOLD as ASSEMBLY_DRAG_THRESHOLD
+} from '../utils/assembly';
+import { RoomSnapResult } from '../utils/roomJoining';
+import { GuideLine } from '../types';
+
+const CLOSE_THRESHOLD = 20; // Distance to first vertex to close polygon (in cm)
+const MIN_VERTICES = 3;
 
 interface CanvasProps {
-  floorplan: ReturnType<typeof useFloorplan>;
   showDimensions?: boolean;
   constraints?: UseConstraintsResult;
 }
 
-export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = false, constraints }) => {
+export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constraints }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number>();
 
-  const {
-    rooms,
-    editorMode,
-    toolMode,
-    config,
-    spacePressed,
-    viewport,
-    drawing,
-    selection,
-    updateRoom,
-    getSelectedRoom,
-    enterEditMode,
-    enterAssemblyMode,
-    recalculateAllEnvelopes
-  } = floorplan;
+  // Get state from Zustand store - subscribe to rooms Map, convert to array with useMemo
+  const roomsMap = useFloorplanStore(state => state.rooms);
+  const rooms = useMemo(() => Array.from(roomsMap.values()), [roomsMap]);
+  const editorMode = useFloorplanStore(state => state.editorMode);
+  const toolMode = useFloorplanStore(state => state.toolMode);
+  const config = useFloorplanStore(state => state.config);
+  const spacePressed = useFloorplanStore(state => state.spacePressed);
+  const viewport = useFloorplanStore(state => state.viewport);
+  const drawing = useFloorplanStore(state => state.drawing);
+  const selection = useFloorplanStore(state => state.selection);
+  const isPanning = useFloorplanStore(state => state.isPanning);
+
+  // Get actions from store
+  const updateRoom = useFloorplanStore(state => state.updateRoom);
+  const getSelectedRoom = useFloorplanStore(state => state.getSelectedRoom);
+  const setEditorMode = useFloorplanStore(state => state.setEditorMode);
+  const recalculateAllEnvelopes = useFloorplanStore(state => state.recalculateAllEnvelopes);
+  const selectRoom = useFloorplanStore(state => state.selectRoom);
+  const selectVertex = useFloorplanStore(state => state.selectVertex);
+  const selectEdge = useFloorplanStore(state => state.selectEdge);
+  const selectAperture = useFloorplanStore(state => state.selectAperture);
+  const clearAllSelection = useFloorplanStore(state => state.clearAllSelection);
+  const setHoverRoom = useFloorplanStore(state => state.setHoverRoom);
+  const setHoverVertex = useFloorplanStore(state => state.setHoverVertex);
+  const setHoverEdge = useFloorplanStore(state => state.setHoverEdge);
+  const setHoverWall = useFloorplanStore(state => state.setHoverWall);
+  const clearVertexSelection = useFloorplanStore(state => state.clearVertexSelection);
+  const clearEdgeSelection = useFloorplanStore(state => state.clearEdgeSelection);
+  const clearWallSelection = useFloorplanStore(state => state.clearWallSelection);
+  const selectRooms = useFloorplanStore(state => state.selectRooms);
+  const getFirstSelectedRoomId = useFloorplanStore(state => state.getFirstSelectedRoomId);
+  const panViewport = useFloorplanStore(state => state.panViewport);
+  const zoomViewport = useFloorplanStore(state => state.zoomViewport);
+  const startPanning = useFloorplanStore(state => state.startPanning);
+  const stopPanning = useFloorplanStore(state => state.stopPanning);
+  const startDrawing = useFloorplanStore(state => state.startDrawing);
+  const addDrawingVertex = useFloorplanStore(state => state.addDrawingVertex);
+  const setCurrentMouseWorld = useFloorplanStore(state => state.setCurrentMouseWorld);
+  const finishDrawing = useFloorplanStore(state => state.finishDrawing);
+  const setSnapPosition = useFloorplanStore(state => state.setSnapPosition);
+  const setActiveGuideLine = useFloorplanStore(state => state.setActiveGuideLine);
+
+  // Track pan state for mouse move handling
+  const [panStartPoint, setPanStartPoint] = useState<Vertex | null>(null);
 
   // Selection rectangle state
   const [selectionRectangle, setSelectionRectangle] = useState<SelectionRectangleState>({
@@ -75,24 +133,23 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     currentPoint: null
   });
 
-  // Edit mode hook
-  const editMode = useEditMode(
-    getSelectedRoom(),
-    updateRoom,
-    config.snapEnabled,
-    config.size,
-    recalculateAllEnvelopes
-  );
+  // Edit mode drag state (use refs for animation loop access)
+  const editDragState = useRef<EditDragState>({
+    isDragging: false,
+    dragType: null,
+    startPoint: null
+  });
+  const editDragScreenStart = useRef<{ x: number; y: number } | null>(null);
 
-  // Assembly mode hook
-  const assemblyMode = useAssemblyMode(
-    rooms,
-    updateRoom,
-    config.snapEnabled,
-    config.size,
-    true, // roomJoiningEnabled
-    recalculateAllEnvelopes
-  );
+  // Assembly mode drag state (use refs for animation loop access)
+  const assemblyDragState = useRef<AssemblyDragState>({
+    isDragging: false,
+    dragType: null,
+    startPoint: null
+  });
+  const assemblyDragScreenStart = useRef<{ x: number; y: number } | null>(null);
+  const assemblyGuideLines = useRef<GuideLine[]>([]);
+  const lastSnapResult = useRef<RoomSnapResult | null>(null);
 
   // Editable dimensions hook
   const editableDimensions = useEditableDimensions();
@@ -127,8 +184,10 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
   /**
    * Render everything
+   * Note: NOT using useCallback to avoid animation loop restarts
+   * Reads fresh values from store on every frame
    */
-  const render = useCallback(() => {
+  const render = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -137,6 +196,15 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
     const rect = canvas.getBoundingClientRect();
 
+    // Get fresh values from store on each render
+    const currentState = useFloorplanStore.getState();
+    const rooms = Array.from(currentState.rooms.values());
+    const editorMode = currentState.editorMode;
+    const config = currentState.config;
+    const viewport = currentState.viewport;
+    const drawing = currentState.drawing;
+    const selection = currentState.selection;
+
     // Clear canvas
     clearCanvas(ctx, rect.width, rect.height);
 
@@ -144,16 +212,21 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     editableDimensions.clearDimensionLabels();
 
     // Draw grid
-    drawGrid(ctx, viewport.viewport, config, rect.width, rect.height);
+    drawGrid(ctx, viewport, config, rect.width, rect.height);
 
     // Draw envelopes FIRST (bottom layer) - ALWAYS draw them to show walls during drag
-    const isAnyRoomDragging = editorMode === EditorMode.Assembly && assemblyMode.dragState.isDragging;
-    const isEditModeDragging = editorMode === EditorMode.Edit && editMode.dragState.isDragging;
+    const isAnyRoomDragging = editorMode === EditorMode.Assembly && assemblyDragState.current.isDragging;
+    const isEditModeDragging = editorMode === EditorMode.Edit && editDragState.current.isDragging;
+
+    // Hide dark gray fill (external walls) when dragging in either mode
+    // When true, drawEnvelope will call drawWalls() to show half-thickness walls with orange snap indicators
+    // When false, drawEnvelope shows the full dark gray fill without calling drawWalls()
+    const hideExternalWallsFill = isAnyRoomDragging || isEditModeDragging;
 
     rooms.forEach(room => {
       // Skip rendering walls for the selected room when dragging in edit mode
       // (because they're not being updated during drag and would show stale positions)
-      const isSelected = selection.isRoomSelected(room.id);
+      const isSelected = selection.selectedRoomIds.includes(room.id);
       if (isEditModeDragging && isSelected) {
         return; // Don't draw envelope (walls) for selected room during edit mode drag
       }
@@ -161,8 +234,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       // Check if this room is involved in snapping (for orange wall highlight)
       let snapSegmentWorld: { p1: Vertex; p2: Vertex } | undefined;
 
-      if (editorMode === EditorMode.Assembly && assemblyMode.lastSnapResult?.snapped) {
-        const snapResult = assemblyMode.lastSnapResult;
+      if (editorMode === EditorMode.Assembly && lastSnapResult.current?.snapped) {
+        const snapResult = lastSnapResult.current; // Access .current to get the actual result
         // Highlight walls that will snap for both edge-vertex and edge-only modes
         if (snapResult.mode === 'edge-vertex' || snapResult.mode === 'edge-only') {
           if (room.id === snapResult.movingRoomId) {
@@ -174,32 +247,32 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       }
 
       // Draw envelope with snap information for orange highlight
-      // Pass isDragging flag to hide lines when dragging
+      // Pass isDragging flag to hide dark gray fill and show half-thickness walls with snap indicators
       // Pass showDebugLines from config
-      drawEnvelope(ctx, room, viewport.viewport, snapSegmentWorld, isAnyRoomDragging, config.showDebugLines ?? false);
+      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false);
     });
 
     // Draw apertures (doors/windows) on top of walls
     // Must be drawn after envelope to be visible on black outer walls
     rooms.forEach(room => {
-      drawApertures(ctx, room, viewport.viewport);
+      drawApertures(ctx, room, viewport);
     });
 
     // Draw rooms
     rooms.forEach(room => {
-      const isSelected = selection.isRoomSelected(room.id);
-      const isHover = selection.selection.hoverRoomId === room.id;
+      const isSelected = selection.selectedRoomIds.includes(room.id);
+      const isHover = selection.hoverRoomId === room.id;
 
       // Draw room floor (always draw all rooms, even during drag)
-      drawRoom(ctx, room, viewport.viewport, {
+      drawRoom(ctx, room, viewport, {
         selected: isSelected,
         strokeColor: isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#64748b',
-        selectedEdgeIndex: isSelected ? selection.selection.selectedEdgeIndex : null
+        selectedEdgeIndex: isSelected ? selection.selectedEdgeIndex : null
       });
 
       // Draw dimension labels if enabled
       if (showDimensions) {
-        drawDimensionLabels(ctx, room, viewport.viewport, {
+        drawDimensionLabels(ctx, room, viewport, {
           selected: isSelected,
           onRegisterLabel: editableDimensions.registerDimensionLabel
         });
@@ -207,43 +280,43 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
       // Draw constraint indicators (in edit mode) - NEW: Additive constraint visualization
       if (editorMode === EditorMode.Edit && isSelected) {
-        drawConstraintIndicators(ctx, room, viewport.viewport);
+        drawConstraintIndicators(ctx, room, viewport);
       }
     });
 
     // Draw drawing preview (in draw mode)
-    if (editorMode === EditorMode.Draw && drawing.drawingState.isDrawing) {
+    if (editorMode === EditorMode.Draw && drawing.isDrawing) {
       drawDrawingPreview(
         ctx,
-        drawing.drawingState.vertices,
-        drawing.drawingState.currentMouseWorld,
-        drawing.drawingState.snapPosition,
-        viewport.viewport
+        drawing.vertices,
+        drawing.currentMouseWorld,
+        drawing.snapPosition,
+        viewport
       );
 
       // Draw guide line (if enabled)
-      if (config.showGuideLines !== false && drawing.drawingState.activeGuideLine) {
-        drawGuideLine(ctx, drawing.drawingState.activeGuideLine, viewport.viewport);
+      if (config.showGuideLines !== false && drawing.activeGuideLine) {
+        drawGuideLine(ctx, drawing.activeGuideLine, viewport);
       }
     }
 
     // Draw assembly guide lines (in assembly mode, if enabled)
-    if (config.showGuideLines !== false && editorMode === EditorMode.Assembly && assemblyMode.assemblyGuideLines.length > 0) {
-      assemblyMode.assemblyGuideLines.forEach(guideLine => {
-        drawGuideLine(ctx, guideLine, viewport.viewport);
+    if (config.showGuideLines !== false && editorMode === EditorMode.Assembly && assemblyGuideLines.current.length > 0) {
+      assemblyGuideLines.current.forEach(guideLine => {
+        drawGuideLine(ctx, guideLine, viewport);
       });
     }
 
     // Draw room joining snap indicators (in assembly mode during drag)
-    if (editorMode === EditorMode.Assembly && assemblyMode.lastSnapResult) {
-      drawRoomSnapIndicators(ctx, assemblyMode.lastSnapResult, viewport.viewport);
+    if (editorMode === EditorMode.Assembly && lastSnapResult) {
+      drawRoomSnapIndicators(ctx, lastSnapResult.current, viewport);
     }
 
     // Draw selection rectangle (in assembly mode)
     if (editorMode === EditorMode.Assembly && selectionRectangle.isSelecting &&
         selectionRectangle.startPoint && selectionRectangle.currentPoint) {
-      const start = worldToScreen(selectionRectangle.startPoint, viewport.viewport);
-      const current = worldToScreen(selectionRectangle.currentPoint, viewport.viewport);
+      const start = worldToScreen(selectionRectangle.startPoint, viewport);
+      const current = worldToScreen(selectionRectangle.currentPoint, viewport);
 
       ctx.save();
 
@@ -271,35 +344,35 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
     // Draw vertex/edge handles (in edit mode)
     if (editorMode === EditorMode.Edit) {
-      const selectedRoom = floorplan.getSelectedRoom();
+      const selectedRoom = getSelectedRoom();
       if (selectedRoom) {
         // Transform vertices to world coordinates (with full transformation)
         const worldVertices = selectedRoom.vertices.map(v =>
           localToWorld(v, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale)
         );
 
-        drawVertexHandles(ctx, worldVertices, viewport.viewport, {
-          selectedIndex: selection.selection.selectedVertexIndex,
-          hoverIndex: selection.selection.hoverVertexIndex
+        drawVertexHandles(ctx, worldVertices, viewport, {
+          selectedIndex: selection.selectedVertexIndex,
+          hoverIndex: selection.hoverVertexIndex
         });
 
-        drawEdgeHandles(ctx, worldVertices, viewport.viewport, {
-          selectedIndex: selection.selection.selectedEdgeIndex,
-          hoverIndex: selection.selection.hoverEdgeIndex
+        drawEdgeHandles(ctx, worldVertices, viewport, {
+          selectedIndex: selection.selectedEdgeIndex,
+          hoverIndex: selection.hoverEdgeIndex
         });
       }
     }
 
     // Draw rotation handle (in assembly mode)
     if (editorMode === EditorMode.Assembly) {
-      const selectedRoom = floorplan.getSelectedRoom();
+      const selectedRoom = getSelectedRoom();
       if (selectedRoom) {
-        drawRotationHandle(ctx, selectedRoom, viewport.viewport, {
-          isDragging: assemblyMode.dragState.dragType === 'rotation'
+        drawRotationHandle(ctx, selectedRoom, viewport, {
+          isDragging: assemblyDragState.current.dragType === 'rotation'
         });
       }
     }
-  }, [rooms, editorMode, config, viewport.viewport.x, viewport.viewport.y, viewport.viewport.zoom, drawing.drawingState, selection, floorplan, assemblyMode.dragState.dragType, assemblyMode.assemblyGuideLines, assemblyMode.lastSnapResult, selectionRectangle, showDimensions, editableDimensions]);
+  };
 
   /**
    * Animation loop
@@ -317,7 +390,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [render]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   /**
    * Handle dimension editing submission
@@ -360,13 +434,14 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
    * - Edit mode: Add vertex at click position
    */
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    console.log('🖱️🖱️ Double click detected:', { editorMode });
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport.viewport);
+    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
 
     // Assembly mode - double click on a room to enter edit mode
     if (editorMode === EditorMode.Assembly) {
@@ -374,15 +449,54 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       const hit = findBestHit(worldPoint, rooms);
       if (hit && hit.roomId) {
         // Select the room and enter edit mode
-        selection.selectRoom(hit.roomId);
-        enterEditMode();
+        selectRoom(hit.roomId);
+        setEditorMode(EditorMode.Edit);
       }
     }
 
-    // Edit mode - add vertex at click position (finds closest edge automatically)
+    // Edit mode - double-click on vertex to delete it, or on edge to add vertex, or on aperture to edit it
     if (editorMode === EditorMode.Edit) {
       const selectedRoom = getSelectedRoom();
+      console.log('🖱️ Edit mode double-click at world:', worldPoint);
+      console.log('  Selected room:', selectedRoom?.id);
       if (selectedRoom) {
+        // Check if double-click is on an aperture first (highest priority)
+        console.log('  Testing apertures...');
+        const apertureHit = hitTestApertures(worldPoint, selectedRoom);
+        if (apertureHit) {
+          console.log('  ✅ HIT APERTURE:', apertureHit);
+          // Select the aperture (this will open the edit modal)
+          selectAperture(apertureHit.apertureId, apertureHit.wallIndex);
+          return;
+        }
+        console.log('  ❌ No aperture hit');
+
+        // Check if double-click is on a vertex second
+        const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.zoom);
+
+        if (vertexIndex !== -1 && selectedRoom.vertices.length > 3) {
+          // Delete vertex on double-click
+          console.log('🗑️ Delete vertex on double-click:', vertexIndex);
+          const result = calculateDeleteVertex({
+            room: selectedRoom,
+            vertexIndex
+          });
+
+          if (result) {
+            console.log('✅ Vertex deleted successfully');
+            updateRoom(selectedRoom.id, result);
+            if (recalculateAllEnvelopes) {
+              setTimeout(async () => await recalculateAllEnvelopes(), 0);
+            }
+          } else {
+            console.log('❌ Failed to delete vertex (need at least 3 vertices)');
+          }
+          return;
+        }
+
+        // Not on a vertex, so add vertex at click position (finds closest edge automatically)
+        console.log('➕ Edit mode double click - adding vertex');
+
         // Convert to local coordinates and find closest edge
         const localPoint = {
           x: (worldPoint.x - selectedRoom.position.x) * Math.cos(-selectedRoom.rotation) -
@@ -416,11 +530,26 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
           }
         }
 
-        // Add vertex to the closest edge
-        editMode.addVertexToEdge(closestEdge, worldPoint);
+        // Add vertex to the closest edge using the utility function
+        console.log('📍 Adding vertex to edge:', closestEdge, 'at distance:', minDistance.toFixed(2));
+        const result = calculateAddVertexToEdge({
+          room: selectedRoom,
+          edgeIndex: closestEdge,
+          worldPoint
+        });
+
+        if (result) {
+          console.log('✅ Vertex added successfully, updating room');
+          updateRoom(selectedRoom.id, result);
+          if (recalculateAllEnvelopes) {
+            recalculateAllEnvelopes();
+          }
+        } else {
+          console.log('❌ Failed to add vertex');
+        }
       }
     }
-  }, [editorMode, viewport, getSelectedRoom, editMode, rooms, selection, enterEditMode]);
+  }, [editorMode, viewport, getSelectedRoom, rooms, selectRoom, setEditorMode, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * Mouse down handler
@@ -432,17 +561,25 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     const rect = canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport.viewport);
+    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
 
     // Pan with middle mouse or space + click
     if (e.button === 1 || (e.button === 0 && spacePressed)) {
-      viewport.startPan({ x: screenX, y: screenY });
+      startPanning();
+      setPanStartPoint({ x: screenX, y: screenY });
       e.preventDefault();
       return;
     }
 
     // Left click
     if (e.button === 0) {
+      console.log('🖱️ Left click detected:', {
+        editorMode,
+        toolMode,
+        isDrawing: drawing.isDrawing,
+        vertexCount: drawing.vertices.length
+      });
+
       // Check for dimension label click first (if dimensions are shown)
       if (showDimensions) {
         const hitLabel = editableDimensions.hitTestDimensionLabel(screenX, screenY);
@@ -456,10 +593,63 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
       // Drawing mode
       if (editorMode === EditorMode.Draw && toolMode === ToolMode.DrawRoom) {
-        if (!drawing.drawingState.isDrawing) {
-          drawing.startDrawing(worldPoint);
+        console.log('📐 In drawing mode, processing click...');
+        if (!drawing.isDrawing) {
+          // Start drawing - calculate snap for first vertex
+          const snapResult = snapWithPriority(
+            worldPoint,
+            null,
+            [],
+            config.size,
+            viewport.zoom,
+            false,
+            config.snapEnabled,
+            rooms
+          );
+          const firstVertex = snapResult.position || worldPoint;
+          startDrawing();
+          addDrawingVertex(firstVertex);
+          setSnapPosition(firstVertex);
         } else {
-          drawing.addVertex(worldPoint);
+          // Check if we're close to the first vertex (for closing)
+          if (drawing.vertices.length >= MIN_VERTICES) {
+            const firstVertex = drawing.vertices[0];
+            const distToFirst = distance(worldPoint, firstVertex);
+
+            console.log('🔍 Polygon closing check on CLICK (raw distance to first):', {
+              vertexCount: drawing.vertices.length,
+              distanceToFirst: distToFirst.toFixed(2),
+              threshold: CLOSE_THRESHOLD,
+              willClose: distToFirst < CLOSE_THRESHOLD,
+              worldPoint,
+              firstVertex
+            });
+
+            if (distToFirst < CLOSE_THRESHOLD) {
+              // Close polygon and create room
+              console.log('✅ Closing polygon!');
+              finishDrawing();
+              return;
+            }
+          }
+
+          // Not closing - calculate snap position and add vertex
+          const lastVertex = drawing.vertices[drawing.vertices.length - 1];
+          const snapResult = snapWithPriority(
+            worldPoint,
+            lastVertex,
+            drawing.vertices,
+            config.size,
+            viewport.zoom,
+            config.orthogonalSnapEnabled ?? false,
+            config.snapEnabled,
+            rooms
+          );
+          const snapPos = snapResult.position || worldPoint;
+
+          // Add the snapped vertex
+          console.log('➕ Adding vertex at:', snapPos);
+          addDrawingVertex(snapPos);
         }
         return;
       }
@@ -470,10 +660,11 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
         // HIGHEST PRIORITY: Check vertex hit first (with zoom-aware hit testing)
         if (selectedRoom) {
-          const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.viewport.zoom);
+          const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.zoom);
           if (vertexIndex !== -1) {
-            selection.selectVertex(vertexIndex);
-            editMode.startVertexDrag(vertexIndex, worldPoint, { x: screenX, y: screenY });
+            selectVertex(vertexIndex);
+            editDragState.current = createVertexDragState(selectedRoom, vertexIndex, worldPoint);
+            editDragScreenStart.current = { x: screenX, y: screenY };
             return;
           }
         }
@@ -535,9 +726,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
               console.log(`🎯 Clicked envelope area - Closest edge: Room ${closestRoomId}, Edge ${closestEdgeIndex}, Distance: ${minDistance.toFixed(2)}cm`);
 
               // Select the room if not already selected
-              selection.selectRoom(closestRoomId);
+              selectRoom(closestRoomId);
               // Select the edge
-              selection.selectEdge(closestEdgeIndex);
+              selectEdge(closestEdgeIndex);
               clickedInEnvelopeArea = true;
               break;
             }
@@ -552,16 +743,18 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
           // Check regular wall hit
           const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
           if (wallIndex !== -1) {
-            selection.selectWall(wallIndex);
-            editMode.startWallDrag(wallIndex, worldPoint, { x: screenX, y: screenY });
+            // Note: selectWall doesn't exist yet in store, we'll use wall index in dragState
+            editDragState.current = createWallDragState(selectedRoom, wallIndex, worldPoint);
+            editDragScreenStart.current = { x: screenX, y: screenY };
             return;
           }
 
           // Check edge hit (fallback if no walls)
           const edgeIndex = hitTestRoomEdges(worldPoint, selectedRoom);
           if (edgeIndex !== -1) {
-            selection.selectEdge(edgeIndex);
-            editMode.startEdgeDrag(edgeIndex, worldPoint, { x: screenX, y: screenY });
+            selectEdge(edgeIndex);
+            editDragState.current = createEdgeDragState(selectedRoom, edgeIndex, worldPoint);
+            editDragScreenStart.current = { x: screenX, y: screenY };
             return;
           }
         }
@@ -569,25 +762,34 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         // No selected room OR clicked outside selected room - try to select a room
         const hit = findBestHit(worldPoint, rooms);
         if (hit && hit.roomId) {
-          selection.selectRoom(hit.roomId, e.shiftKey);
+          selectRoom(hit.roomId, e.shiftKey);
           return;
         }
 
         // Clicked outside any room - exit to Assembly mode
         if (!e.shiftKey) {
-          enterAssemblyMode();
+          setEditorMode(EditorMode.Assembly);
         }
         return;
       }
 
       // Assembly mode - room selection, dragging, and rotation
       if (editorMode === EditorMode.Assembly) {
+        console.log('🏠 Assembly mode click');
         const selectedRoom = getSelectedRoom();
+        console.log('Selected room:', selectedRoom?.id);
 
         // Check rotation handle first (highest priority)
-        if (selectedRoom && hitTestRotationHandle(worldPoint, selectedRoom)) {
-          assemblyMode.startRotation(selectedRoom, worldPoint);
-          return;
+        if (selectedRoom) {
+          const handleHit = hitTestRotationHandle(worldPoint, selectedRoom);
+          console.log('Rotation handle hit test:', handleHit);
+          if (handleHit) {
+            console.log('🎯 Rotation handle clicked!');
+            assemblyDragState.current = createRotationDragState(selectedRoom, worldPoint);
+            assemblyDragScreenStart.current = { x: screenX, y: screenY }; // IMPORTANT: Set screen start for mouse move to work!
+            console.log('Assembly drag state:', assemblyDragState.current);
+            return;
+          }
         }
 
         // Find room at click position
@@ -595,8 +797,10 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         if (hit && hit.roomId) {
           const room = rooms.find(r => r.id === hit.roomId);
           if (room) {
-            selection.selectRoom(room.id, e.shiftKey);
-            assemblyMode.startRoomDrag(room, worldPoint, { x: screenX, y: screenY });
+            console.log('🎯 Room clicked:', room.id);
+            selectRoom(room.id, e.shiftKey);
+            assemblyDragState.current = createRoomDragState(room, worldPoint);
+            assemblyDragScreenStart.current = { x: screenX, y: screenY };
           }
           return;
         }
@@ -610,12 +814,12 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
             currentPoint: worldPoint
           });
         } else {
-          selection.clearSelection();
+          clearAllSelection();
         }
         return;
       }
     }
-  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, editMode, assemblyMode, enterAssemblyMode]);
+  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, selectRoom, selectVertex, selectEdge, setEditorMode, clearAllSelection, startDrawing, addDrawingVertex, startPanning, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * Mouse move handler
@@ -627,16 +831,42 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     const rect = canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport.viewport);
+    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
 
     // Update panning
-    if (viewport.updatePan({ x: screenX, y: screenY })) {
+    if (isPanning && panStartPoint) {
+      const dx = screenX - panStartPoint.x;
+      const dy = screenY - panStartPoint.y;
+      panViewport(dx, dy);
+      setPanStartPoint({ x: screenX, y: screenY });
       return;
     }
 
-    // Update drawing preview
-    if (editorMode === EditorMode.Draw && drawing.drawingState.isDrawing) {
-      drawing.updateMousePosition(worldPoint);
+    // Update drawing preview with snapping
+    if (editorMode === EditorMode.Draw && drawing.isDrawing) {
+      if (drawing.vertices.length > 0) {
+        const lastVertex = drawing.vertices[drawing.vertices.length - 1];
+
+        // Calculate snap position with priority
+        const snapResult = snapWithPriority(
+          worldPoint,
+          lastVertex,
+          drawing.vertices,
+          config.size,
+          viewport.zoom,
+          config.orthogonalSnapEnabled ?? false, // orthogonalEnabled
+          config.snapEnabled,
+          rooms
+        );
+
+        setCurrentMouseWorld(worldPoint);
+        setSnapPosition(snapResult.position || worldPoint);
+        setActiveGuideLine(snapResult.guideLine || null);
+      } else {
+        setCurrentMouseWorld(worldPoint);
+        setSnapPosition(null);
+        setActiveGuideLine(null);
+      }
       return;
     }
 
@@ -645,53 +875,84 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       const selectedRoom = getSelectedRoom();
 
       // Check if we're dragging (or about to start dragging)
-      if (selectedRoom && editMode.dragState.dragType !== null) {
-        if (editMode.dragState.dragType === 'vertex' && selection.selection.selectedVertexIndex !== null) {
-          editMode.updateVertexDrag(selection.selection.selectedVertexIndex, worldPoint, { x: screenX, y: screenY });
-          return;
-        } else if (editMode.dragState.dragType === 'edge') {
-          // Edge drag can be from either an edge handle or a wall
-          if (selection.selection.selectedEdgeIndex !== null) {
-            editMode.updateEdgeDrag(selection.selection.selectedEdgeIndex, worldPoint, { x: screenX, y: screenY });
-            return;
-          } else if (selection.selection.selectedWallIndex !== null) {
-            editMode.updateWallDrag(selection.selection.selectedWallIndex, worldPoint, { x: screenX, y: screenY });
-            return;
+      if (selectedRoom && editDragState.current.dragType !== null && editDragScreenStart.current) {
+        // Check threshold first
+        if (!editDragState.current.isDragging) {
+          if (isEditDragThresholdExceeded(editDragScreenStart.current, { x: screenX, y: screenY }, EDIT_DRAG_THRESHOLD)) {
+            editDragState.current = { ...editDragState.current, isDragging: true };
           }
+          return; // Wait for next mouse move to actually update
+        }
+
+        // Perform drag update based on type
+        if (editDragState.current.dragType === 'vertex' && editDragState.current.vertexIndex !== undefined) {
+          calculateVertexDrag({
+            room: selectedRoom,
+            vertexIndex: editDragState.current.vertexIndex,
+            worldPoint,
+            dragState: editDragState.current,
+            gridSnapEnabled: config.snapEnabled,
+            gridSize: config.size
+          }).then(result => {
+            updateRoom(selectedRoom.id, result);
+          });
+          return;
+        } else if (editDragState.current.dragType === 'edge' && editDragState.current.edgeIndex !== undefined) {
+          const result = calculateEdgeDrag({
+            room: selectedRoom,
+            edgeIndex: editDragState.current.edgeIndex,
+            worldPoint,
+            dragState: editDragState.current,
+            gridSnapEnabled: config.snapEnabled,
+            gridSize: config.size
+          });
+          updateRoom(selectedRoom.id, result);
+          return;
+        } else if (editDragState.current.dragType === 'wall' && editDragState.current.wallIndex !== undefined) {
+          const result = calculateWallDrag({
+            room: selectedRoom,
+            wallIndex: editDragState.current.wallIndex,
+            worldPoint,
+            dragState: editDragState.current,
+            gridSnapEnabled: config.snapEnabled,
+            gridSize: config.size
+          });
+          updateRoom(selectedRoom.id, result);
+          return;
         }
       }
 
       // Update hover state for vertices/edges/walls
       if (selectedRoom) {
-        const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.viewport.zoom);
+        const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.zoom);
         if (vertexIndex !== -1) {
-          selection.setHoverVertex(vertexIndex);
+          setHoverVertex(vertexIndex);
           return;
         }
 
         // Check external wall hover first
         const externalWallIndex = hitTestExternalWalls(worldPoint, selectedRoom);
         if (externalWallIndex !== -1) {
-          selection.setHoverWall(externalWallIndex);
+          setHoverWall(externalWallIndex);
           return;
         }
 
         // Check wall hover before edge (same priority as click)
         const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
         if (wallIndex !== -1) {
-          selection.setHoverWall(wallIndex);
+          setHoverWall(wallIndex);
           return;
         }
 
         const edgeIndex = hitTestRoomEdges(worldPoint, selectedRoom);
         if (edgeIndex !== -1) {
-          selection.setHoverEdge(edgeIndex);
+          setHoverEdge(edgeIndex);
           return;
         }
 
-        selection.setHoverVertex(null);
-        selection.setHoverEdge(null);
-        selection.setHoverWall(null);
+        setHoverVertex(null);
+        setHoverEdge(null);
+        setHoverWall(null);
       }
       return;
     }
@@ -708,16 +969,52 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       }
 
       const selectedRoom = getSelectedRoom();
-      const selectedRoomId = selection.getFirstSelectedRoomId();
+      const selectedRoomId = getFirstSelectedRoomId();
 
-      if (selectedRoom && selectedRoomId && assemblyMode.dragState.dragType !== null) {
-        if (assemblyMode.dragState.dragType === 'rotation') {
-          // Update rotation
-          assemblyMode.updateRotation(selectedRoomId, selectedRoom, worldPoint, config.snapEnabled);
+      console.log('🖱️ Assembly mouse move:', {
+        hasSelectedRoom: !!selectedRoom,
+        selectedRoomId,
+        dragType: assemblyDragState.current.dragType,
+        hasScreenStart: !!assemblyDragScreenStart.current
+      });
+
+      if (selectedRoom && selectedRoomId && assemblyDragState.current.dragType !== null && assemblyDragScreenStart.current) {
+        console.log('✅ In drag mode, type:', assemblyDragState.current.dragType);
+        if (assemblyDragState.current.dragType === 'rotation') {
+          // Update rotation using utility function
+          const newRotation = calculateRoomRotation({
+            room: selectedRoom,
+            worldPoint,
+            snapEnabled: config.snapEnabled
+          });
+          console.log('🔄 Rotating room to:', (newRotation * 180 / Math.PI).toFixed(1), 'degrees');
+          updateRoom(selectedRoomId, { rotation: newRotation });
           return;
-        } else if (assemblyMode.dragState.dragType === 'room') {
-          // Update room drag
-          assemblyMode.updateRoomDrag(selectedRoomId, worldPoint, { x: screenX, y: screenY });
+        } else if (assemblyDragState.current.dragType === 'room') {
+          // Check threshold first
+          if (!assemblyDragState.current.isDragging) {
+            if (isAssemblyDragThresholdExceeded(assemblyDragScreenStart.current, { x: screenX, y: screenY }, ASSEMBLY_DRAG_THRESHOLD)) {
+              assemblyDragState.current = { ...assemblyDragState.current, isDragging: true };
+            }
+          }
+
+          // Update room drag position using utility function
+          if (assemblyDragState.current.startPoint && assemblyDragState.current.originalPosition) {
+            const { position, snapResult } = calculateRoomDragPosition({
+              originalPosition: assemblyDragState.current.originalPosition,
+              startPoint: assemblyDragState.current.startPoint,
+              currentPoint: worldPoint,
+              gridSnapEnabled: config.snapEnabled,
+              gridSize: config.size,
+              roomJoiningEnabled: true,
+              draggedRoom: { ...selectedRoom, position: assemblyDragState.current.originalPosition, rotation: assemblyDragState.current.originalRotation || selectedRoom.rotation },
+              allRooms: rooms,
+              visualizationOnly: true
+            });
+
+            lastSnapResult.current = snapResult;
+            updateRoom(selectedRoomId, { position });
+          }
           return;
         }
       }
@@ -725,13 +1022,13 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       // Update hover state for rooms
       const hit = findBestHit(worldPoint, rooms);
       if (hit && hit.roomId) {
-        selection.setHoverRoom(hit.roomId);
+        setHoverRoom(hit.roomId);
       } else {
-        selection.setHoverRoom(null);
+        setHoverRoom(null);
       }
       return;
     }
-  }, [editorMode, viewport, drawing, editMode, assemblyMode, selection, rooms, getSelectedRoom, config.snapEnabled, selectionRectangle]);
+  }, [editorMode, viewport, drawing, selection, rooms, getSelectedRoom, getFirstSelectedRoomId, config, selectionRectangle, updateRoom, setHoverRoom, setHoverVertex, setHoverEdge, setHoverWall, panViewport, isPanning, panStartPoint, setCurrentMouseWorld]);
 
   /**
    * Mouse up handler
@@ -741,7 +1038,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     const rect = canvas?.getBoundingClientRect();
     const screenX = rect ? e.clientX - rect.left : 0;
     const screenY = rect ? e.clientY - rect.top : 0;
-    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport.viewport);
+    const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
 
     // Complete rectangle selection
     if (selectionRectangle.isSelecting && selectionRectangle.startPoint && selectionRectangle.currentPoint) {
@@ -773,9 +1070,9 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
       // Update selection
       if (selectedRoomIds.length > 0) {
-        selection.selectRooms(selectedRoomIds);
+        selectRooms(selectedRoomIds);
       } else if (!e.shiftKey) {
-        selection.clearSelection();
+        clearAllSelection();
       }
 
       // Clear rectangle selection state
@@ -790,42 +1087,148 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
 
     // Stop panning
     if (e.button === 1 || (e.button === 0 && spacePressed)) {
-      viewport.endPan();
+      stopPanning();
+      setPanStartPoint(null);
     }
 
     // End edit mode dragging
-    if (editorMode === EditorMode.Edit && editMode.dragState.dragType !== null) {
-      if (editMode.dragState.dragType === 'vertex') {
-        editMode.endVertexDrag();
-        selection.clearVertexSelection();
-      } else if (editMode.dragState.dragType === 'edge') {
-        // Check if it was a wall drag or edge drag
-        if (selection.selection.selectedWallIndex !== null) {
-          // Only clear wall selection if we actually dragged (moved more than threshold)
-          if (editMode.dragState.isDragging) {
-            editMode.endWallDrag();
-            selection.clearWallSelection();
-          } else {
-            // Just clicked, keep wall selected
-            editMode.endWallDrag();
+    if (editorMode === EditorMode.Edit && editDragState.current.dragType !== null) {
+      const selectedRoom = getSelectedRoom();
+
+      if (editDragState.current.dragType === 'vertex') {
+        // Update originalVertices after manual drag completes
+        if (selectedRoom && editDragState.current.isDragging) {
+          updateRoom(selectedRoom.id, {
+            originalVertices: selectedRoom.vertices.map(v => ({ ...v }))
+          });
+        }
+        // Only clear vertex selection if we actually dragged
+        // If just clicked (not dragged), keep vertex selected so user can delete it
+        if (editDragState.current.isDragging) {
+          clearVertexSelection();
+        }
+      } else if (editDragState.current.dragType === 'edge' || editDragState.current.dragType === 'wall') {
+        // Update originalVertices after manual drag completes
+        if (selectedRoom) {
+          updateRoom(selectedRoom.id, {
+            originalVertices: selectedRoom.vertices.map(v => ({ ...v }))
+          });
+        }
+
+        // Clear selection based on drag type
+        if (editDragState.current.wallIndex !== undefined) {
+          if (editDragState.current.isDragging) {
+            clearWallSelection();
           }
-        } else if (selection.selection.selectedEdgeIndex !== null) {
-          editMode.endEdgeDrag();
-          selection.clearEdgeSelection();
+          // If just clicked (not dragged), keep wall selected
+        } else if (editDragState.current.edgeIndex !== undefined) {
+          clearEdgeSelection();
         }
       }
+
+      // Recalculate envelopes after drag completes (only if we actually dragged)
+      if (editDragState.current.isDragging && recalculateAllEnvelopes) {
+        recalculateAllEnvelopes();
+      }
+
+      // Clear edit drag state
+      editDragState.current = {
+        isDragging: false,
+        dragType: null,
+        startPoint: null
+      };
+      editDragScreenStart.current = null;
     }
 
     // End assembly mode dragging or rotation
-    if (editorMode === EditorMode.Assembly && assemblyMode.dragState.dragType !== null) {
-      if (assemblyMode.dragState.dragType === 'rotation') {
-        assemblyMode.endRotation();
-      } else if (assemblyMode.dragState.dragType === 'room') {
-        const selectedRoomId = selection.getFirstSelectedRoomId();
-        assemblyMode.endRoomDrag(selectedRoomId || undefined, worldPoint);
+    if (editorMode === EditorMode.Assembly && assemblyDragState.current.dragType !== null) {
+      if (assemblyDragState.current.dragType === 'rotation') {
+        // Regenerate walls after rotation
+        const selectedRoomId = getFirstSelectedRoomId();
+        const selectedRoom = getSelectedRoom();
+
+        if (selectedRoomId && selectedRoom) {
+          console.log('🔄 Regenerating walls after rotation...');
+
+          // Regenerate walls with current rotation-affected geometry
+          const newWalls = generateWalls(
+            selectedRoom.vertices,
+            selectedRoom.wallThickness,
+            selectedRoom.walls  // Pass existing walls to preserve properties
+          );
+
+          // Update room with regenerated walls
+          updateRoom(selectedRoomId, { walls: newWalls });
+
+          // Recalculate envelopes
+          if (recalculateAllEnvelopes) {
+            setTimeout(async () => await recalculateAllEnvelopes(), 0);
+          }
+
+          console.log('✅ Walls regenerated after rotation');
+        }
+
+        // Clear the drag state for rotation
+        assemblyDragState.current = {
+          isDragging: false,
+          dragType: null,
+          startPoint: null
+        };
+        assemblyDragScreenStart.current = null;
+      } else if (assemblyDragState.current.dragType === 'room') {
+        const selectedRoomId = getFirstSelectedRoomId();
+        const selectedRoom = getSelectedRoom();
+
+        // Apply final snap transformation if room joining is enabled
+        if (lastSnapResult.current && lastSnapResult.current.snapped && selectedRoomId && selectedRoom &&
+            assemblyDragState.current.startPoint && assemblyDragState.current.originalPosition &&
+            assemblyDragState.current.originalRotation !== undefined) {
+          const finalSnap = calculateFinalRoomSnap({
+            draggedRoom: selectedRoom,
+            originalPosition: assemblyDragState.current.originalPosition,
+            originalRotation: assemblyDragState.current.originalRotation,
+            startPoint: assemblyDragState.current.startPoint,
+            endPoint: worldPoint,
+            allRooms: rooms
+          });
+
+          if (finalSnap && finalSnap.snapped) {
+            const updates: Partial<Room> = { position: finalSnap.position };
+
+            // If rotation changed, regenerate walls
+            if (finalSnap.rotation !== undefined) {
+              updates.rotation = finalSnap.rotation;
+
+              console.log('🔄 Regenerating walls after room snap with rotation...');
+              const newWalls = generateWalls(
+                selectedRoom.vertices,
+                selectedRoom.wallThickness,
+                selectedRoom.walls
+              );
+              updates.walls = newWalls;
+            }
+
+            updateRoom(selectedRoomId, updates);
+          }
+        }
+
+        // Clear assembly state
+        assemblyDragState.current = {
+          isDragging: false,
+          dragType: null,
+          startPoint: null
+        };
+        assemblyDragScreenStart.current = null;
+        assemblyGuideLines.current = [];
+        lastSnapResult.current = null;
+
+        // Recalculate envelopes after drag
+        if (recalculateAllEnvelopes) {
+          setTimeout(async () => await recalculateAllEnvelopes(), 0);
+        }
       }
     }
-  }, [spacePressed, viewport, editorMode, editMode, assemblyMode, selectionRectangle, rooms, selection]);
+  }, [spacePressed, viewport, editorMode, selectionRectangle, rooms, selection, getSelectedRoom, getFirstSelectedRoomId, updateRoom, clearVertexSelection, clearEdgeSelection, clearWallSelection, selectRooms, clearAllSelection, stopPanning, recalculateAllEnvelopes]);
 
   /**
    * Setup wheel zoom with passive: false
@@ -841,7 +1244,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      viewport.handleWheel(e.deltaY, { x: mouseX, y: mouseY });
+      zoomViewport(e.deltaY, { x: mouseX, y: mouseY });
     };
 
     canvas.addEventListener('wheel', handleWheel, { passive: false });
@@ -855,7 +1258,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
    * Get cursor style
    */
   const getCursor = (): string => {
-    if (viewport.isPanning || spacePressed) return 'grabbing';
+    if (isPanning || spacePressed) return 'grabbing';
     if (editorMode === EditorMode.Draw) return 'crosshair';
     if (editorMode === EditorMode.Edit) return 'pointer';
     if (editorMode === EditorMode.Assembly) return 'move';

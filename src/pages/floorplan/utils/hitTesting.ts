@@ -326,3 +326,117 @@ export function hitTestRotationHandle(
   const dist = distance(worldPoint, handlePos);
   return dist < ROTATION_HANDLE_THRESHOLD;
 }
+
+/**
+ * Hit test apertures (doors and windows) in a room
+ * Returns { wallIndex, apertureId } if hit, or null if no hit
+ */
+export function hitTestApertures(
+  worldPoint: Vertex,
+  room: Room
+): { wallIndex: number; apertureId: string } | null {
+  // Use room.vertices (inner edge) - same as rendering uses
+  const vertexArray = room.vertices;
+  const n = vertexArray.length;
+
+  let totalApertures = 0;
+  room.walls.forEach(w => totalApertures += (w.apertures?.length || 0));
+
+  if (totalApertures > 0) {
+    console.log(`    🔍 hitTestApertures: Testing ${totalApertures} apertures in room ${room.id}`);
+  }
+
+  for (let wallIndex = 0; wallIndex < room.walls.length; wallIndex++) {
+    const wall = room.walls[wallIndex];
+
+    // Skip walls without apertures
+    if (!wall.apertures || wall.apertures.length === 0) continue;
+
+    // Skip if wall index is invalid
+    if (wall.vertexIndex >= n) continue;
+
+    // Get wall vertices
+    const v1Local = vertexArray[wall.vertexIndex];
+    const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+
+    // Transform to world coordinates
+    const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+    const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+    // Calculate wall direction and normal
+    const dx = v2World.x - v1World.x;
+    const dy = v2World.y - v1World.y;
+    const wallLength = Math.sqrt(dx * dx + dy * dy);
+
+    if (wallLength === 0) continue;
+
+    const dirX = dx / wallLength;
+    const dirY = dy / wallLength;
+
+    // Perpendicular normal (outward)
+    const normalX = dirY;
+    const normalY = -dirX;
+
+    // Test each aperture on this wall
+    for (const aperture of wall.apertures) {
+      console.log(`      Testing ${aperture.type} ${aperture.id.substring(0, 8)}...`);
+
+      // Convert aperture dimensions from meters to pixels
+      const apertureWidthPx = aperture.width * 100;
+
+      // Calculate start position along wall based on anchor vertex
+      let startDist: number;
+      if (aperture.anchorVertex === 'end') {
+        startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+      } else {
+        startDist = aperture.distance * 100;
+      }
+
+      console.log(`        Wall length: ${wallLength.toFixed(1)}px, Start dist: ${startDist.toFixed(1)}px, Width: ${apertureWidthPx.toFixed(1)}px`);
+
+      // Calculate aperture corners on room edge (inner edge)
+      const roomEdgeStartX = v1World.x + dirX * startDist;
+      const roomEdgeStartY = v1World.y + dirY * startDist;
+
+      const roomEdgeEndX = roomEdgeStartX + dirX * apertureWidthPx;
+      const roomEdgeEndY = roomEdgeStartY + dirY * apertureWidthPx;
+
+      // Extend aperture outward from room edge (same as rendering: wall.thickness + 10cm)
+      const apertureDepth = wall.thickness + 10;
+
+      // Create aperture rectangle (4 corners)
+      // Inner edge is on room boundary
+      const innerStart = {
+        x: roomEdgeStartX,
+        y: roomEdgeStartY
+      };
+      const innerEnd = {
+        x: roomEdgeEndX,
+        y: roomEdgeEndY
+      };
+      // Outer edge extends outward
+      const outerEnd = {
+        x: roomEdgeEndX + normalX * apertureDepth * room.scale,
+        y: roomEdgeEndY + normalY * apertureDepth * room.scale
+      };
+      const outerStart = {
+        x: roomEdgeStartX + normalX * apertureDepth * room.scale,
+        y: roomEdgeStartY + normalY * apertureDepth * room.scale
+      };
+
+      // Test if point is inside aperture rectangle
+      const aperturePolygon = [innerStart, innerEnd, outerEnd, outerStart];
+      const isInside = pointInPolygon(worldPoint, aperturePolygon);
+
+      console.log(`        Polygon: [${aperturePolygon.map(p => `(${p.x.toFixed(0)},${p.y.toFixed(0)})`).join(', ')}]`);
+      console.log(`        Point: (${worldPoint.x.toFixed(0)}, ${worldPoint.y.toFixed(0)})`);
+      console.log(`        Result: ${isInside ? '✅ HIT!' : '❌ miss'}`);
+
+      if (isInside) {
+        return { wallIndex, apertureId: aperture.id };
+      }
+    }
+  }
+
+  return null;
+}

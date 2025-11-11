@@ -898,6 +898,18 @@ export function drawDrawingPreview(
 
   const screenVertices = vertices.map(v => worldToScreen(v, viewport));
 
+  // Check if we're close to the first vertex (for closing indicator)
+  const MIN_VERTICES = 3;
+  const CLOSE_THRESHOLD = 20; // Must match Canvas.tsx
+  let isNearFirstVertex = false;
+  if (vertices.length >= MIN_VERTICES && snapPosition) {
+    const firstVertex = vertices[0];
+    const dx = snapPosition.x - firstVertex.x;
+    const dy = snapPosition.y - firstVertex.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    isNearFirstVertex = dist < CLOSE_THRESHOLD;
+  }
+
   // Draw completed segments
   ctx.strokeStyle = '#3b82f6';
   ctx.lineWidth = 2;
@@ -913,25 +925,44 @@ export function drawDrawingPreview(
     const lastVertex = screenVertices[screenVertices.length - 1];
     const snapScreen = worldToScreen(snapPosition, viewport);
 
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+    // If near first vertex, draw closing line in green
+    if (isNearFirstVertex) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+    } else {
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+      ctx.lineWidth = 2;
+    }
     ctx.setLineDash([5, 5]);
     ctx.beginPath();
     ctx.moveTo(lastVertex.x, lastVertex.y);
     ctx.lineTo(snapScreen.x, snapScreen.y);
     ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // Draw vertices
   screenVertices.forEach((v, index) => {
     const isFirst = index === 0;
-    ctx.fillStyle = isFirst ? '#ef4444' : '#3b82f6';
+    // Highlight first vertex in green if we're close enough to close
+    const vertexColor = isFirst && isNearFirstVertex ? '#22c55e' : (isFirst ? '#ef4444' : '#3b82f6');
+    ctx.fillStyle = vertexColor;
     ctx.beginPath();
     ctx.arc(v.x, v.y, isFirst ? 10 : 6, 0, Math.PI * 2);
     ctx.fill();
+
+    // Draw pulsing ring around first vertex when close
+    if (isFirst && isNearFirstVertex) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(v.x, v.y, 15, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   });
 
   // Draw snap position indicator
-  if (snapPosition) {
+  if (snapPosition && !isNearFirstVertex) {
     const snapScreen = worldToScreen(snapPosition, viewport);
     ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 2;

@@ -1,11 +1,11 @@
 /**
  * FloorplanPage - main page component for the floorplan editor
- * Clean React-first architecture with hooks
+ * Clean React-first architecture with Zustand store
  */
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useFloorplan } from './hooks/useFloorplan';
+import { useFloorplanStore } from './store/floorplanStore';
 import { useConstraints } from './hooks/useConstraints';
 import { useGeoRefMode } from './hooks/useGeoRefMode';
 import { Canvas } from './components/Canvas';
@@ -13,12 +13,13 @@ import { GeoRefCanvas } from './components/GeoRefCanvas';
 import { ModeSelectorBar } from './components/ui/ModeSelectorBar';
 import {
   ViewControlButtons,
-  ZoomPercentage,
-  ExportImportButtons
+  ZoomPercentage
 } from './components/ui/SimpleComponents';
 import { WallPropertiesPanel } from './components/ui/WallPropertiesPanel';
 import { ConstraintToolbar } from './components/ui/ConstraintToolbar';
 import { SettingsModal } from './components/ui/SettingsModal';
+import { ApertureEditModal } from './components/ui/ApertureEditModal';
+import { DrilldownMenu, MenuItem } from './components/ui/DrilldownMenu';
 import { EditorMode } from './types';
 import type { GeoReference } from './types/geo';
 import { generateWalls } from './utils/walls';
@@ -55,12 +56,54 @@ export const FloorplanPage: React.FC = () => {
     scale: 1.0,
   });
 
-  const floorplan = useFloorplan({
-    propertyId,
-    geoReference: initialGeoRef,
-  });
+  // Get state and actions from store
+  const roomsMap = useFloorplanStore(state => state.rooms);
+  const rooms = useMemo(() => Array.from(roomsMap.values()), [roomsMap]);
+  const getSelectedRoom = useFloorplanStore(state => state.getSelectedRoom);
+  const getFirstSelectedRoomId = useFloorplanStore(state => state.getFirstSelectedRoomId);
+  const editorMode = useFloorplanStore(state => state.editorMode);
+  const setEditorMode = useFloorplanStore(state => state.setEditorMode);
+  const selection = useFloorplanStore(state => state.selection);
+  const config = useFloorplanStore(state => state.config);
+  const updateConfig = useFloorplanStore(state => state.updateConfig);
+  const viewport = useFloorplanStore(state => state.viewport);
+  const setZoom = useFloorplanStore(state => state.setZoom);
+  const resetViewport = useFloorplanStore(state => state.resetViewport);
+  const drawing = useFloorplanStore(state => state.drawing);
+  const cancelDrawing = useFloorplanStore(state => state.cancelDrawing);
+  const undoLastVertex = useFloorplanStore(state => state.undoLastVertex);
+  const spacePressed = useFloorplanStore(state => state.spacePressed);
+  const setSpacePressed = useFloorplanStore(state => state.setSpacePressed);
+  const updateRoom = useFloorplanStore(state => state.updateRoom);
+  const deleteSelectedRooms = useFloorplanStore(state => state.deleteSelectedRooms);
+  const copySelectedRooms = useFloorplanStore(state => state.copySelectedRooms);
+  const pasteRooms = useFloorplanStore(state => state.pasteRooms);
+  const undo = useFloorplanStore(state => state.undo);
+  const redo = useFloorplanStore(state => state.redo);
+  const clearAllSelection = useFloorplanStore(state => state.clearAllSelection);
+  const selectVertex = useFloorplanStore(state => state.selectVertex);
+  const clearWallSelection = useFloorplanStore(state => state.clearWallSelection);
+  const clearVertexSelection = useFloorplanStore(state => state.clearVertexSelection);
+  const exportFloorplan = useFloorplanStore(state => state.exportFloorplan);
+  const importFloorplan = useFloorplanStore(state => state.importFloorplan);
+  const saveFloorplan = useFloorplanStore(state => state.saveFloorplan);
+  const recalculateAllEnvelopes = useFloorplanStore(state => state.recalculateAllEnvelopes);
+  const geoReference = useFloorplanStore(state => state.geoReference);
+  const setGeoReference = useFloorplanStore(state => state.setGeoReference);
+  const updateAperture = useFloorplanStore(state => state.updateAperture);
+  const deleteAperture = useFloorplanStore(state => state.deleteAperture);
+  const clearApertureSelection = useFloorplanStore(state => state.clearApertureSelection);
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isConfigSubMenuOpen, setIsConfigSubMenuOpen] = useState(config.menuOpenByDefault ?? true);
+  const [selectedConfigCategory, setSelectedConfigCategory] = useState<'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | null>(null);
+
+  // Blur focused element when config submenu closes
+  useEffect(() => {
+    if (!isConfigSubMenuOpen && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }, [isConfigSubMenuOpen]);
 
   // Cadastral data state
   const [parcelWKT, setParcelWKT] = useState<string | undefined>(undefined);
@@ -123,7 +166,7 @@ export const FloorplanPage: React.FC = () => {
                 console.log('   Y:', centroid.y);
                 console.log('   SRID:', parcelaData.parcela.geometria.srid);
 
-                floorplan.setGeoReference(newGeoRef);
+                setGeoReference(newGeoRef);
               } else {
                 console.error('❌ Invalid centroid data:', centroid);
                 console.error('   Full response:', parcelaData);
@@ -144,17 +187,17 @@ export const FloorplanPage: React.FC = () => {
 
   // Constraint management hook - NEW: Additive constraint functionality
   const constraints = useConstraints({
-    rooms: floorplan.rooms,
-    selectedRoomId: floorplan.selection.selection.selectedRoomIds[0] || null,
-    updateRoom: floorplan.updateRoom,
-    recalculateEnvelopes: floorplan.recalculateAllEnvelopes
+    rooms: rooms,
+    selectedRoomId: selection.selectedRoomIds[0] || null,
+    updateRoom,
+    recalculateEnvelopes: recalculateAllEnvelopes
   });
 
   // Memoize edge mapping for constraints
   // Selected edge index maps directly to room vertices
   const selectedEdgeForConstraints = useMemo(() => {
-    const selectedRoom = floorplan.getSelectedRoom();
-    const selectedEdgeIndex = floorplan.selection.selection.selectedEdgeIndex;
+    const selectedRoom = getSelectedRoom();
+    const selectedEdgeIndex = selection.selectedEdgeIndex;
 
     if (!selectedRoom || selectedEdgeIndex === null) {
       return [];
@@ -166,28 +209,29 @@ export const FloorplanPage: React.FC = () => {
     // Edge index directly corresponds to the edge starting at vertex[index] and ending at vertex[index+1]
     return [selectedEdgeIndex];
   }, [
-    floorplan.selection.selection.selectedRoomIds,
-    floorplan.selection.selection.selectedEdgeIndex,
-    floorplan.rooms
+    selection.selectedRoomIds,
+    selection.selectedEdgeIndex,
+    rooms
   ]);
 
   // GeoRef mode state
   const [geoRefInteractionMode, setGeoRefInteractionMode] = useState<'translate' | 'rotate' | 'none'>('none');
   const [geoRefSnapEnabled, setGeoRefSnapEnabled] = useState(false);
 
-  // Initialize geoReference in store if not set
+  // Initialize geoReference in store if not set (run once on mount)
   useEffect(() => {
-    if (!floorplan.geoReference) {
+    if (!geoReference) {
       console.log('🔧 Initializing geoReference in store with:', initialGeoRef);
-      floorplan.setGeoReference(initialGeoRef);
+      setGeoReference(initialGeoRef);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   // GeoRef hook - use ONLY store state
   const geoRefMode = useGeoRefMode({
-    initialGeoRef: floorplan.geoReference || initialGeoRef,
-    onGeoRefChange: floorplan.setGeoReference,
-    rooms: floorplan.rooms,
+    initialGeoRef: geoReference || initialGeoRef,
+    onGeoRefChange: setGeoReference,
+    rooms: rooms,
     snapEnabled: geoRefSnapEnabled,
   });
 
@@ -197,93 +241,101 @@ export const FloorplanPage: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Space key for panning
-      if (e.code === 'Space' && !floorplan.spacePressed) {
-        floorplan.setSpacePressed(true);
+      if (e.code === 'Space' && !spacePressed) {
+        setSpacePressed(true);
         e.preventDefault();
       }
 
-      // Escape to cancel drawing or clear selection
+      // Escape to cancel drawing and exit to assembly mode
       if (e.code === 'Escape') {
-        if (floorplan.drawing.drawingState.isDrawing) {
-          floorplan.drawing.cancelDrawing();
+        if (drawing.isDrawing) {
+          // Cancel drawing and exit to assembly mode
+          cancelDrawing();
+          clearAllSelection();
+          setEditorMode(EditorMode.Assembly);
+        } else if (editorMode === EditorMode.Draw || editorMode === EditorMode.Edit) {
+          // Exit draw/edit mode (including add mode) and go to assembly mode
+          clearAllSelection();
+          setEditorMode(EditorMode.Assembly);
         } else {
-          floorplan.selection.clearSelection();
+          // Clear selections in other modes
+          clearAllSelection();
         }
       }
 
       // Delete key
       if (e.code === 'Delete' || e.code === 'Backspace') {
         // In edit mode - delete selected vertex
-        if (floorplan.editorMode === EditorMode.Edit && floorplan.selection.selection.selectedVertexIndex !== null) {
-          const selectedRoom = floorplan.getSelectedRoom();
+        if (editorMode === EditorMode.Edit && selection.selectedVertexIndex !== null) {
+          const selectedRoom = getSelectedRoom();
           if (selectedRoom && selectedRoom.vertices.length > 3) {
-            const newVertices = selectedRoom.vertices.filter((_, i) => i !== floorplan.selection.selection.selectedVertexIndex);
+            const newVertices = selectedRoom.vertices.filter((_, i) => i !== selection.selectedVertexIndex);
             // Preserve existing wall properties when regenerating (pass old vertices for matching)
             const newWalls = generateWalls(newVertices, selectedRoom.wallThickness, selectedRoom.walls, selectedRoom.vertices);
-            floorplan.updateRoom(selectedRoom.id, { vertices: newVertices, walls: newWalls });
-            floorplan.selection.selectVertex(null as any); // Clear selection
+            updateRoom(selectedRoom.id, { vertices: newVertices, walls: newWalls });
+            selectVertex(null as any); // Clear selection
           }
           e.preventDefault();
           return;
         }
 
         // In assembly mode - delete selected rooms
-        if (floorplan.selection.selection.selectedRoomIds.length > 0) {
-          floorplan.deleteSelectedRooms();
+        if (selection.selectedRoomIds.length > 0) {
+          deleteSelectedRooms();
           e.preventDefault();
         }
       }
 
       // Mode switching
       if (e.code === 'Digit1' || e.code === 'KeyD') {
-        floorplan.enterDrawMode();
+        setEditorMode(EditorMode.Draw);
       }
       if (e.code === 'Digit2' || e.code === 'KeyE') {
-        floorplan.enterEditMode();
+        setEditorMode(EditorMode.Edit);
       }
       if (e.code === 'Digit3' || e.code === 'KeyA') {
-        floorplan.enterAssemblyMode();
+        setEditorMode(EditorMode.Assembly);
       }
       if (e.code === 'Digit4' || e.code === 'KeyR') {
-        floorplan.enterGeoRefMode();
+        setEditorMode(EditorMode.GeoRef);
       }
 
       // Grid toggle
       if (e.code === 'KeyG') {
-        floorplan.updateConfig({ enabled: !floorplan.config.enabled });
+        updateConfig({ enabled: !config.enabled });
       }
 
       // Snap toggle
       if (e.code === 'KeyS') {
-        floorplan.updateConfig({ snapEnabled: !floorplan.config.snapEnabled });
+        updateConfig({ snapEnabled: !config.snapEnabled });
       }
 
       // Undo/Redo
       if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey)) {
         if (e.shiftKey) {
           // Ctrl+Shift+Z = Redo
-          floorplan.redo();
+          redo();
         } else {
           // Ctrl+Z = Undo
-          floorplan.undo();
+          undo();
         }
         e.preventDefault();
       }
 
       // Copy/Paste
       if (e.code === 'KeyC' && (e.ctrlKey || e.metaKey)) {
-        floorplan.copySelectedRooms();
+        copySelectedRooms();
         e.preventDefault();
       }
 
       if (e.code === 'KeyV' && (e.ctrlKey || e.metaKey)) {
-        floorplan.pasteRooms();
+        pasteRooms();
         e.preventDefault();
       }
 
       // Undo last vertex (while drawing)
-      if (e.code === 'Backspace' && floorplan.drawing.drawingState.isDrawing) {
-        floorplan.drawing.undoLastVertex();
+      if (e.code === 'Backspace' && drawing.isDrawing) {
+        undoLastVertex();
         e.preventDefault();
       }
     };
@@ -291,7 +343,7 @@ export const FloorplanPage: React.FC = () => {
     const handleKeyUp = (e: KeyboardEvent) => {
       // Space key release
       if (e.code === 'Space') {
-        floorplan.setSpacePressed(false);
+        setSpacePressed(false);
       }
     };
 
@@ -302,28 +354,28 @@ export const FloorplanPage: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [floorplan]);
+  }, [spacePressed, setSpacePressed, drawing, cancelDrawing, clearAllSelection, clearWallSelection, clearVertexSelection, editorMode, selection, getSelectedRoom, updateRoom, deleteSelectedRooms, setEditorMode, updateConfig, config, undo, redo, copySelectedRooms, pasteRooms, undoLastVertex, selectVertex]);
 
   // Zoom controls
   const handleZoomIn = () => {
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
-    floorplan.viewport.setZoom(floorplan.viewport.viewport.zoom * 1.2, { x: centerX, y: centerY });
+    setZoom(viewport.zoom * 1.2, { x: centerX, y: centerY });
   };
 
   const handleZoomOut = () => {
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
-    floorplan.viewport.setZoom(floorplan.viewport.viewport.zoom * 0.8, { x: centerX, y: centerY });
+    setZoom(viewport.zoom * 0.8, { x: centerX, y: centerY });
   };
 
   const handleResetView = () => {
-    floorplan.viewport.resetViewport();
+    resetViewport();
   };
 
   // Wall properties panel handlers
   const handleUpdateWallThickness = (wallIndex: number, thickness: number) => {
-    const selectedRoom = floorplan.getSelectedRoom();
+    const selectedRoom = getSelectedRoom();
     if (!selectedRoom) return;
 
     const updatedWalls = [...selectedRoom.walls];
@@ -332,11 +384,11 @@ export const FloorplanPage: React.FC = () => {
       thickness
     };
 
-    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+    updateRoom(selectedRoom.id, { walls: updatedWalls });
   };
 
   const handleUpdateWallType = (wallIndex: number, wallType: string) => {
-    const selectedRoom = floorplan.getSelectedRoom();
+    const selectedRoom = getSelectedRoom();
     if (!selectedRoom) return;
 
     const updatedWalls = [...selectedRoom.walls];
@@ -345,11 +397,11 @@ export const FloorplanPage: React.FC = () => {
       wallType: wallType as any
     };
 
-    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+    updateRoom(selectedRoom.id, { walls: updatedWalls });
   };
 
   const handleUpdateWallHeight = (wallIndex: number, height: number) => {
-    const selectedRoom = floorplan.getSelectedRoom();
+    const selectedRoom = getSelectedRoom();
     if (!selectedRoom) return;
 
     const updatedWalls = [...selectedRoom.walls];
@@ -358,11 +410,11 @@ export const FloorplanPage: React.FC = () => {
       height
     };
 
-    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+    updateRoom(selectedRoom.id, { walls: updatedWalls });
   };
 
   const handleUpdateWallApertures = (wallIndex: number, apertures: any[]) => {
-    const selectedRoom = floorplan.getSelectedRoom();
+    const selectedRoom = getSelectedRoom();
     if (!selectedRoom) return;
 
     const updatedWalls = [...selectedRoom.walls];
@@ -378,22 +430,134 @@ export const FloorplanPage: React.FC = () => {
       wallType: hasWindows ? 'exterior' : currentWall.wallType
     };
 
-    floorplan.updateRoom(selectedRoom.id, { walls: updatedWalls });
+    updateRoom(selectedRoom.id, { walls: updatedWalls });
   };
 
   const handleCloseWallPanel = () => {
-    floorplan.selection.clearWallSelection();
+    clearWallSelection();
   };
+
+  // Main menu structure - starts directly at tools level
+  const mainMenuItems: MenuItem[] = useMemo(() => [
+    {
+      id: 'export',
+      label: 'Export',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+      ),
+      onSelect: exportFloorplan
+    },
+    {
+      id: 'import',
+      label: 'Import',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+        </svg>
+      ),
+      onSelect: importFloorplan
+    },
+    ...(propertyId ? [{
+      id: 'save',
+      label: 'Save',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+        </svg>
+      ),
+      onSelect: saveFloorplan
+    }] : []),
+    {
+      id: 'settings',
+      label: 'Settings',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+      submenu: [
+        {
+          id: 'visibility',
+          label: 'Visibility',
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          ),
+          onSelect: () => {
+            setSelectedConfigCategory('visibility');
+            setIsSettingsModalOpen(true);
+          }
+        },
+        {
+          id: 'snapping',
+          label: 'Snapping',
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+            </svg>
+          ),
+          onSelect: () => {
+            setSelectedConfigCategory('snapping');
+            setIsSettingsModalOpen(true);
+          }
+        },
+        {
+          id: 'grid',
+          label: 'Grid Settings',
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+            </svg>
+          ),
+          onSelect: () => {
+            setSelectedConfigCategory('grid');
+            setIsSettingsModalOpen(true);
+          }
+        },
+        {
+          id: 'walls',
+          label: 'Wall Defaults',
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          ),
+          onSelect: () => {
+            setSelectedConfigCategory('walls');
+            setIsSettingsModalOpen(true);
+          }
+        },
+        {
+          id: 'apertures',
+          label: 'Apertures',
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+            </svg>
+          ),
+          onSelect: () => {
+            setSelectedConfigCategory('apertures');
+            setIsSettingsModalOpen(true);
+          }
+        }
+      ]
+    }
+  ], [propertyId, exportFloorplan, importFloorplan, saveFloorplan]);
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gray-50">
       {/* Canvas - Conditional rendering based on editor mode */}
-      {floorplan.editorMode === EditorMode.GeoRef ? (
+      {editorMode === EditorMode.GeoRef ? (
         <GeoRefCanvas
-          rooms={floorplan.rooms}
-          geoRef={floorplan.geoReference || initialGeoRef}
+          rooms={rooms}
+          geoRef={geoReference || initialGeoRef}
           parcelWKT={parcelWKT}
-          parcelSRID={parcelSRID || (floorplan.geoReference || initialGeoRef).srid}
+          parcelSRID={parcelSRID || (geoReference || initialGeoRef).srid}
           interactionMode={geoRefInteractionMode}
           onDragStart={geoRefMode.startDrag}
           onDragMove={geoRefMode.updateDrag}
@@ -403,7 +567,7 @@ export const FloorplanPage: React.FC = () => {
           onRotateEnd={geoRefMode.endRotate}
         />
       ) : (
-        <Canvas floorplan={floorplan} showDimensions={floorplan.config.showDimensions ?? false} constraints={constraints} />
+        <Canvas showDimensions={config.showDimensions ?? false} constraints={constraints} />
       )}
 
       {/* Back Button (Top Left) */}
@@ -430,74 +594,72 @@ export const FloorplanPage: React.FC = () => {
 
       {/* Mode Selector Bar (Top Center) */}
       <ModeSelectorBar
-        mode={floorplan.editorMode}
+        mode={editorMode}
         setMode={(mode) => {
-          if (mode === EditorMode.Draw) floorplan.enterDrawMode();
-          else if (mode === EditorMode.Edit) floorplan.enterEditMode();
-          else if (mode === EditorMode.Assembly) floorplan.enterAssemblyMode();
-          else if (mode === EditorMode.GeoRef) floorplan.enterGeoRefMode();
+          if (mode === EditorMode.Draw) setEditorMode(EditorMode.Draw);
+          else if (mode === EditorMode.Edit) setEditorMode(EditorMode.Edit);
+          else if (mode === EditorMode.Assembly) setEditorMode(EditorMode.Assembly);
+          else if (mode === EditorMode.GeoRef) setEditorMode(EditorMode.GeoRef);
         }}
-        canEdit={floorplan.selection.selection.selectedRoomIds.length > 0}
-        onCalculateWalls={floorplan.recalculateAllEnvelopes}
+        canEdit={selection.selectedRoomIds.length > 0}
+        onCalculateWalls={recalculateAllEnvelopes}
       />
 
-      {/* Export/Import/Settings Buttons (Top Left, below back button) */}
-      <div className="absolute top-16 left-4 flex flex-col gap-2">
-        <ExportImportButtons
-          onExport={floorplan.exportFloorplan}
-          onImport={floorplan.importFloorplan}
-          onSave={floorplan.saveFloorplan}
-          canSave={!!propertyId}
-        />
+      {/* Tools Menu (Top Left, below back button) */}
+      <div className="absolute top-16 left-4">
+        <div className="relative">
+          {!isConfigSubMenuOpen && (
+            <button
+              onClick={() => setIsConfigSubMenuOpen(true)}
+              className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium transition-all flex items-center gap-2 focus:outline-none select-none text-gray-700 hover:bg-gray-50"
+              title="Tools"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
+              </svg>
+              Tools
+            </button>
+          )}
 
-        {/* Settings Button */}
-        <button
-          onClick={() => setIsSettingsModalOpen(true)}
-          className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2"
-          title="Settings"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="w-4 h-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-            />
-          </svg>
-          Settings
-        </button>
+          <DrilldownMenu
+            isOpen={isConfigSubMenuOpen}
+            onClose={() => setIsConfigSubMenuOpen(false)}
+            items={mainMenuItems}
+            title="Tools"
+          />
+        </div>
       </div>
 
       {/* View Controls (Top Right) */}
       <ViewControlButtons
-        viewport={floorplan.viewport.viewport}
+        viewport={viewport}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleResetView}
       />
 
       {/* Zoom Percentage (Bottom Right) */}
-      <ZoomPercentage zoom={floorplan.viewport.viewport.zoom} />
+      <ZoomPercentage zoom={viewport.zoom} />
 
       {/* Wall Properties Panel (Right Side) - Show when edge is selected in Edit mode */}
-      {floorplan.editorMode === EditorMode.Edit &&
-       floorplan.selection.selection.selectedEdgeIndex !== null &&
-       floorplan.getSelectedRoom() && (
+      {editorMode === EditorMode.Edit &&
+       selection.selectedEdgeIndex !== null &&
+       getSelectedRoom() && (
         <WallPropertiesPanel
-          room={floorplan.getSelectedRoom()!}
-          wallIndex={floorplan.selection.selection.selectedEdgeIndex}
+          room={getSelectedRoom()!}
+          wallIndex={selection.selectedEdgeIndex}
+          config={config}
           onUpdateWallThickness={handleUpdateWallThickness}
           onUpdateWallType={handleUpdateWallType}
           onUpdateWallHeight={handleUpdateWallHeight}
@@ -507,9 +669,9 @@ export const FloorplanPage: React.FC = () => {
       )}
 
       {/* Constraint Toolbar (Right Side) - Show in Edit mode when a room is selected */}
-      {floorplan.editorMode === EditorMode.Edit && floorplan.getSelectedRoom() && (
+      {editorMode === EditorMode.Edit && getSelectedRoom() && (
         <ConstraintToolbar
-          room={floorplan.getSelectedRoom()!}
+          room={getSelectedRoom()!}
           constraints={constraints}
           selectedWalls={selectedEdgeForConstraints}
           wallPropertiesPanelOpen={false}
@@ -519,11 +681,50 @@ export const FloorplanPage: React.FC = () => {
       {/* Settings Modal */}
       <SettingsModal
         isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
-        config={floorplan.config}
-        onUpdateConfig={floorplan.updateConfig}
-        onRecalculateWalls={() => floorplan.recalculateAllEnvelopes()}
+        onClose={() => {
+          setIsSettingsModalOpen(false);
+          setSelectedConfigCategory(null);
+        }}
+        config={config}
+        onUpdateConfig={updateConfig}
+        onRecalculateWalls={recalculateAllEnvelopes}
+        category={selectedConfigCategory}
       />
+
+      {/* Aperture Edit Modal */}
+      {selection.selectedApertureId && selection.selectedApertureWallIndex !== null && (() => {
+        const selectedRoom = getSelectedRoom();
+        if (!selectedRoom) return null;
+
+        const wall = selectedRoom.walls[selection.selectedApertureWallIndex];
+        if (!wall || !wall.apertures) return null;
+
+        const aperture = wall.apertures.find(a => a.id === selection.selectedApertureId);
+        if (!aperture) return null;
+
+        return (
+          <ApertureEditModal
+            aperture={aperture}
+            config={config}
+            onSave={(updates) => {
+              updateAperture(
+                selectedRoom.id,
+                selection.selectedApertureWallIndex!,
+                selection.selectedApertureId!,
+                updates
+              );
+            }}
+            onDelete={() => {
+              deleteAperture(
+                selectedRoom.id,
+                selection.selectedApertureWallIndex!,
+                selection.selectedApertureId!
+              );
+            }}
+            onClose={clearApertureSelection}
+          />
+        );
+      })()}
     </div>
   );
 };
