@@ -259,12 +259,18 @@ export interface SelectionRectangleState {
 
 export interface DragState {
   isDragging: boolean;
-  dragType: 'vertex' | 'edge' | 'room' | 'rotation' | null;
+  dragType: 'vertex' | 'edge' | 'room' | 'rotation' | 'aperture' | null;
   startPoint: Vertex | null;
   originalVertices?: Vertex[];
   originalPosition?: Vertex;
   originalRotation?: number;
   originalScale?: number;
+  // Aperture drag specific fields
+  apertureId?: string;
+  sourceWallIndex?: number;
+  sourceRoomId?: string;
+  originalApertureDistance?: number;
+  originalApertureAnchor?: 'start' | 'end';
 }
 
 // ============================================================================

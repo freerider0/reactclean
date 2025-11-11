@@ -41,6 +41,7 @@ export interface RoomsSlice {
 
   // Aperture actions
   updateAperture: (roomId: string, wallIndex: number, apertureId: string, updates: Partial<import('../../types').Aperture>) => void;
+  moveAperture: (roomId: string, sourceWallIndex: number, targetWallIndex: number, apertureId: string, newDistance: number, newAnchor: 'start' | 'end') => void;
   deleteAperture: (roomId: string, wallIndex: number, apertureId: string) => void;
 
   // Envelope recalculation

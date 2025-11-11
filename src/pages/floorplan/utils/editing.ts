@@ -1,9 +1,9 @@
 /**
- * Editing utilities - Pure functions for vertex/edge/wall manipulation
+ * Editing utilities - Pure functions for vertex/edge/wall/aperture manipulation
  * These functions contain the core business logic for edit mode operations
  */
 
-import { Vertex, Room, Wall } from '../types';
+import { Vertex, Room, Wall, Aperture } from '../types';
 import { snapToGrid } from './snapping';
 import { recenterVertices, distanceToSegment } from './geometry';
 import { localToWorld, worldToLocal } from './coordinates';
@@ -17,7 +17,7 @@ export const DRAG_THRESHOLD = 5; // pixels before starting drag
  */
 export interface EditDragState {
   isDragging: boolean;
-  dragType: 'vertex' | 'edge' | 'wall' | null;
+  dragType: 'vertex' | 'edge' | 'wall' | 'aperture' | null;
   startPoint: Vertex | null;
   originalVertices?: Vertex[];
   originalPosition?: Vertex;
@@ -26,6 +26,15 @@ export interface EditDragState {
   vertexIndex?: number;
   edgeIndex?: number;
   wallIndex?: number;
+  // Aperture drag specific fields
+  apertureId?: string;
+  sourceWallIndex?: number;
+  sourceRoomId?: string;
+  targetWallIndex?: number | null; // Target wall during drag (can be different from source)
+  originalApertureDistance?: number;
+  originalApertureAnchor?: 'start' | 'end';
+  apertureClickOffsetPx?: number; // Offset from aperture start where user clicked (for better UX)
+  apertureWidth?: number; // Aperture width in meters (needed for correct anchor='end' calculation)
 }
 
 /**
@@ -504,5 +513,189 @@ export function createWallDragState(
     originalRotation: room.rotation,
     originalScale: room.scale,
     wallIndex
+  };
+}
+
+/**
+ * Create initial drag state for aperture drag
+ */
+export function createApertureDragState(
+  room: Room,
+  wallIndex: number,
+  apertureId: string,
+  worldPoint: Vertex
+): EditDragState {
+  const wall = room.walls[wallIndex];
+  const aperture = wall.apertures?.find(a => a.id === apertureId);
+
+  if (!aperture) {
+    throw new Error(`Aperture ${apertureId} not found on wall ${wallIndex}`);
+  }
+
+  // Calculate the click offset within the aperture for better UX
+  // This allows the user to drag from where they clicked, not from the aperture start
+  const vertexArray = room.vertices;
+  const n = vertexArray.length;
+
+  let clickOffsetPx = 0; // Offset from aperture start where user clicked
+
+  if (wall.vertexIndex < n) {
+    const v1Local = vertexArray[wall.vertexIndex];
+    const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+    const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+    const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+    // Calculate wall direction
+    const dx = v2World.x - v1World.x;
+    const dy = v2World.y - v1World.y;
+    const wallLength = Math.sqrt(dx * dx + dy * dy);
+
+    if (wallLength > 0) {
+      // Calculate aperture position on wall
+      const apertureWidthPx = aperture.width * 100;
+      let apertureStartPx: number;
+
+      if (aperture.anchorVertex === 'end') {
+        apertureStartPx = wallLength - (aperture.distance * 100) - apertureWidthPx;
+      } else {
+        apertureStartPx = aperture.distance * 100;
+      }
+
+      // Project click point onto wall to find click position
+      const pointDx = worldPoint.x - v1World.x;
+      const pointDy = worldPoint.y - v1World.y;
+      const dotProduct = pointDx * dx + pointDy * dy;
+      const t = Math.max(0, Math.min(1, dotProduct / (wallLength * wallLength)));
+      const clickPositionPx = t * wallLength;
+
+      // Calculate offset from aperture start
+      clickOffsetPx = clickPositionPx - apertureStartPx;
+
+      // Clamp to aperture bounds
+      clickOffsetPx = Math.max(0, Math.min(apertureWidthPx, clickOffsetPx));
+    }
+  }
+
+  return {
+    isDragging: false,
+    dragType: 'aperture',
+    startPoint: worldPoint,
+    originalVertices: [...room.vertices],
+    originalPosition: { ...room.position },
+    originalRotation: room.rotation,
+    originalScale: room.scale,
+    apertureId,
+    sourceWallIndex: wallIndex,
+    sourceRoomId: room.id,
+    originalApertureDistance: aperture.distance,
+    originalApertureAnchor: aperture.anchorVertex,
+    apertureClickOffsetPx: clickOffsetPx, // Store click offset for drag
+    apertureWidth: aperture.width // Store width for correct anchor='end' calculation
+  };
+}
+
+/**
+ * Calculate aperture position during drag
+ * Returns the target wall index, new distance, and anchor vertex
+ */
+export function calculateApertureDrag(params: {
+  worldPoint: Vertex;
+  dragState: EditDragState;
+  targetRoom: Room;
+  targetWallIndex: number | null;
+}): {
+  targetWallIndex: number;
+  newDistance: number;
+  newAnchor: 'start' | 'end';
+  isValid: boolean;
+} | null {
+  const { worldPoint, dragState, targetRoom, targetWallIndex } = params;
+
+  if (!dragState.startPoint || dragState.originalPosition === undefined ||
+      dragState.originalRotation === undefined || dragState.originalScale === undefined) {
+    return null;
+  }
+
+  // If no target wall detected, return null
+  if (targetWallIndex === null) {
+    return null;
+  }
+
+  const wall = targetRoom.walls[targetWallIndex];
+  if (!wall) {
+    return null;
+  }
+
+  // Get wall vertices in world space
+  const vertexArray = targetRoom.vertices;
+  const n = vertexArray.length;
+
+  if (wall.vertexIndex >= n) {
+    return null;
+  }
+
+  const v1Local = vertexArray[wall.vertexIndex];
+  const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+
+  const v1World = localToWorld(v1Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
+  const v2World = localToWorld(v2Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
+
+  // Calculate wall direction
+  const dx = v2World.x - v1World.x;
+  const dy = v2World.y - v1World.y;
+  const wallLength = Math.sqrt(dx * dx + dy * dy);
+
+  if (wallLength === 0) {
+    return null;
+  }
+
+  // Project worldPoint onto wall edge to find position along wall
+  const pointDx = worldPoint.x - v1World.x;
+  const pointDy = worldPoint.y - v1World.y;
+  const dotProduct = pointDx * dx + pointDy * dy;
+  const t = Math.max(0, Math.min(1, dotProduct / (wallLength * wallLength)));
+
+  // Distance from start in pixels (where cursor is)
+  const cursorPositionPx = t * wallLength;
+
+  // Get click offset from drag state (where user clicked within aperture)
+  const clickOffsetPx = dragState.apertureClickOffsetPx || 0;
+
+  // Get aperture width from drag state
+  const apertureWidthPx = (dragState.apertureWidth || 0) * 100;
+
+  // Calculate aperture start position by subtracting the click offset
+  // This makes the aperture follow the cursor maintaining the relative position
+  const apertureStartPx = cursorPositionPx - clickOffsetPx;
+
+  // Calculate aperture end position
+  const apertureEndPx = apertureStartPx + apertureWidthPx;
+
+  // Distance from start to aperture start
+  const distanceFromStartPx = apertureStartPx;
+
+  // Distance from end to aperture END (not start!)
+  // This is critical: anchor='end' measures from wall end to aperture end
+  const distanceFromEndPx = wallLength - apertureEndPx;
+
+  // Choose anchor based on which end is closer
+  let newAnchor: 'start' | 'end';
+  let newDistance: number;
+
+  if (distanceFromStartPx < distanceFromEndPx) {
+    // Closer to start
+    newAnchor = 'start';
+    newDistance = distanceFromStartPx / 100; // Convert to meters: distance from wall start to aperture start
+  } else {
+    // Closer to end
+    newAnchor = 'end';
+    newDistance = distanceFromEndPx / 100; // Convert to meters: distance from wall end to aperture end
+  }
+
+  return {
+    targetWallIndex,
+    newDistance,
+    newAnchor,
+    isValid: true // Will be validated by positioning algorithm
   };
 }

@@ -264,6 +264,116 @@ export function drawApertures(
 }
 
 /**
+ * Draw ghost preview of aperture being dragged
+ */
+export function drawApertureGhost(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  wallIndex: number,
+  aperture: { width: number; type: 'door' | 'window' },
+  targetDistance: number,
+  targetAnchor: 'start' | 'end',
+  viewport: Viewport,
+  isValid: boolean = true
+): void {
+  if (!room.walls || wallIndex < 0 || wallIndex >= room.walls.length) return;
+
+  ctx.save();
+
+  const wall = room.walls[wallIndex];
+  const sourceVertices = room.vertices;
+
+  if (!sourceVertices || sourceVertices.length < 3) {
+    ctx.restore();
+    return;
+  }
+
+  // Transform to world coordinates
+  const worldVertices = sourceVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  // Get wall quad vertices
+  const [inner1, inner2] = getWallQuad(wall, worldVertices);
+
+  // Calculate wall direction along inner edge
+  const wallDx = inner2.x - inner1.x;
+  const wallDy = inner2.y - inner1.y;
+  const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+  if (wallLength === 0) {
+    ctx.restore();
+    return;
+  }
+
+  // Unit vector along wall
+  const unitX = wallDx / wallLength;
+  const unitY = wallDy / wallLength;
+
+  // Perpendicular vector pointing outward
+  const perpX = unitY;
+  const perpY = -unitX;
+
+  // Convert aperture width from meters to pixels
+  const apertureWidthPx = aperture.width * 100;
+
+  // Calculate aperture position along wall
+  let startDist: number;
+  if (targetAnchor === 'end') {
+    startDist = wallLength - (targetDistance * 100) - apertureWidthPx;
+  } else {
+    startDist = targetDistance * 100;
+  }
+  const endDist = startDist + apertureWidthPx;
+
+  // Aperture corners on room edge (inner edge)
+  const roomEdgeStart = {
+    x: inner1.x + unitX * startDist,
+    y: inner1.y + unitY * startDist
+  };
+  const roomEdgeEnd = {
+    x: inner1.x + unitX * endDist,
+    y: inner1.y + unitY * endDist
+  };
+
+  // Extend aperture outward from room edge
+  const apertureDepth = wall.thickness + 10;
+  const outerApertureStart = {
+    x: roomEdgeStart.x + perpX * apertureDepth,
+    y: roomEdgeStart.y + perpY * apertureDepth
+  };
+  const outerApertureEnd = {
+    x: roomEdgeEnd.x + perpX * apertureDepth,
+    y: roomEdgeEnd.y + perpY * apertureDepth
+  };
+
+  // Transform to screen coordinates
+  const screenRoomEdgeStart = worldToScreen(roomEdgeStart, viewport);
+  const screenRoomEdgeEnd = worldToScreen(roomEdgeEnd, viewport);
+  const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
+  const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
+
+  // Draw ghost aperture with transparency
+  // Use cyan for valid position, red for invalid
+  ctx.fillStyle = isValid ? 'rgba(0, 255, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
+  ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.6)' : 'rgba(255, 0, 0, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+
+  ctx.beginPath();
+  ctx.moveTo(screenRoomEdgeStart.x, screenRoomEdgeStart.y);
+  ctx.lineTo(screenRoomEdgeEnd.x, screenRoomEdgeEnd.y);
+  ctx.lineTo(screenOuterApertureEnd.x, screenOuterApertureEnd.y);
+  ctx.lineTo(screenOuterApertureStart.x, screenOuterApertureStart.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/**
  * Draw external walls using envelope vertex pairings
  * Uses debugContractedEnvelope (inner edge) and envelopeVertices (outer edge)
  */
