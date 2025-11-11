@@ -49,25 +49,31 @@ export function WallPropertiesPanel({
 }: WallPropertiesPanelProps) {
   const wall = room.walls[wallIndex];
 
-  // Local state for responsive UI
+  // Local state for responsive UI (thickness, height, wallType)
+  // Apertures are NOT in local state - always read from wall.apertures to avoid sync issues
   const [localThickness, setLocalThickness] = useState(wall.thickness);
   const [localHeight, setLocalHeight] = useState(wall.height || 2.7);
   const [localWallType, setLocalWallType] = useState<WallType>(wall.wallType || 'interior_division');
-  const [localApertures, setLocalApertures] = useState<Aperture[]>(wall.apertures || []);
 
-  // Update local state when wall changes
+  // Update local state when wallIndex changes (switching to different wall)
+  // Don't sync on every wall object change to avoid loops
   useEffect(() => {
     setLocalThickness(wall.thickness);
     setLocalHeight(wall.height || 2.7);
     setLocalWallType(wall.wallType || 'interior_division');
-    setLocalApertures(wall.apertures || []);
-  }, [wall, wallIndex]);
+  }, [wallIndex]); // Only depend on wallIndex, not wall object
 
   // Get wall vertices for display
+  // Determine which vertex array this wall references (envelope or room vertices)
+  const wallsUseEnvelope = room.walls.some(w => w.vertexIndex >= room.vertices.length);
+  const sourceVertices = wallsUseEnvelope && room.envelopeVertices && room.envelopeVertices.length > 0
+    ? room.envelopeVertices
+    : room.vertices;
+
   const v1Index = wall.vertexIndex;
-  const v2Index = (wall.vertexIndex + 1) % room.vertices.length;
-  const v1 = room.vertices[v1Index];
-  const v2 = room.vertices[v2Index];
+  const v2Index = (wall.vertexIndex + 1) % sourceVertices.length;
+  const v1 = sourceVertices[v1Index];
+  const v2 = sourceVertices[v2Index];
 
   // Calculate wall length in pixels (cm) and meters
   const dx = v2.x - v1.x;
@@ -102,8 +108,8 @@ export function WallPropertiesPanel({
       sillHeight: type === 'window' ? 0.9 : undefined // 90cm sill for windows
     };
 
-    const updatedApertures = [...localApertures, newAperture];
-    setLocalApertures(updatedApertures);
+    // Use wall.apertures directly (no local state for apertures)
+    const updatedApertures = [...(wall.apertures || []), newAperture];
     onUpdateWallApertures(wallIndex, updatedApertures);
 
     // Auto-assign exterior wall type when adding a window
@@ -114,43 +120,38 @@ export function WallPropertiesPanel({
   };
 
   const removeAperture = (apertureId: string) => {
-    const updatedApertures = localApertures.filter(a => a.id !== apertureId);
-    setLocalApertures(updatedApertures);
+    const updatedApertures = (wall.apertures || []).filter(a => a.id !== apertureId);
     onUpdateWallApertures(wallIndex, updatedApertures);
   };
 
   const updateApertureWidth = (apertureId: string, width: number) => {
-    const updatedApertures = localApertures.map(a =>
+    const updatedApertures = (wall.apertures || []).map(a =>
       a.id === apertureId ? { ...a, width } : a
     );
-    setLocalApertures(updatedApertures);
     onUpdateWallApertures(wallIndex, updatedApertures);
   };
 
   const updateApertureHeight = (apertureId: string, height: number) => {
-    const updatedApertures = localApertures.map(a =>
+    const updatedApertures = (wall.apertures || []).map(a =>
       a.id === apertureId ? { ...a, height } : a
     );
-    setLocalApertures(updatedApertures);
     onUpdateWallApertures(wallIndex, updatedApertures);
   };
 
   const updateApertureSillHeight = (apertureId: string, sillHeight: number) => {
-    const updatedApertures = localApertures.map(a =>
+    const updatedApertures = (wall.apertures || []).map(a =>
       a.id === apertureId ? { ...a, sillHeight } : a
     );
-    setLocalApertures(updatedApertures);
     onUpdateWallApertures(wallIndex, updatedApertures);
   };
 
   const updateApertureDistance = (apertureId: string, distance: number, fromVertex: 'start' | 'end') => {
-    const updatedApertures = localApertures.map(a => {
+    const updatedApertures = (wall.apertures || []).map(a => {
       if (a.id === apertureId) {
         return { ...a, distance, anchorVertex: fromVertex };
       }
       return a;
     });
-    setLocalApertures(updatedApertures);
     onUpdateWallApertures(wallIndex, updatedApertures);
   };
 
@@ -289,8 +290,8 @@ export function WallPropertiesPanel({
 
           {/* Aperture List */}
           <div className="space-y-2">
-            {localApertures.length > 0 ? (
-              localApertures.map((aperture) => (
+            {(wall.apertures || []).length > 0 ? (
+              (wall.apertures || []).map((aperture) => (
                 <div key={aperture.id} className="p-2 bg-gray-50 rounded">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium">

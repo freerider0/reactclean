@@ -5,13 +5,15 @@
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { EditorMode, ToolMode, Vertex, SelectionRectangleState } from '../types';
-import { screenToWorld, worldToScreen, localToWorld } from '../utils/coordinates';
+import { screenToWorld, worldToScreen, localToWorld, worldToLocal } from '../utils/coordinates';
 import {
   clearCanvas,
   drawGrid,
   drawRoom,
   drawWalls,
   drawEnvelope,
+  drawExternalWalls,
+  drawApertures,
   drawDrawingPreview,
   drawGuideLine,
   drawVertexHandles,
@@ -19,17 +21,20 @@ import {
   drawRotationHandle,
   drawDimensionLabels,
   drawRoomSnapIndicators,
-  drawConstraintIndicators
+  drawConstraintIndicators,
+  drawCenterlineVertexNumbers,
+  drawContractedEnvelopeVertexNumbers
 } from '../utils/rendering';
 import {
   hitTestRoomVertices,
   hitTestRoomEdges,
   hitTestRoomWalls,
+  hitTestExternalWalls,
   hitTestRoom,
   findBestHit,
   hitTestRotationHandle
 } from '../utils/hitTesting';
-import { polygonIntersectsRectangle } from '../utils/geometry';
+import { polygonIntersectsRectangle, pointInPolygon } from '../utils/geometry';
 import { useFloorplan } from '../hooks/useFloorplan';
 import { useEditMode } from '../hooks/useEditMode';
 import { useAssemblyMode } from '../hooks/useAssemblyMode';
@@ -51,7 +56,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     rooms,
     editorMode,
     toolMode,
-    gridConfig,
+    config,
     spacePressed,
     viewport,
     drawing,
@@ -74,8 +79,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
   const editMode = useEditMode(
     getSelectedRoom(),
     updateRoom,
-    gridConfig.snapEnabled,
-    gridConfig.size,
+    config.snapEnabled,
+    config.size,
     recalculateAllEnvelopes
   );
 
@@ -83,8 +88,8 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
   const assemblyMode = useAssemblyMode(
     rooms,
     updateRoom,
-    gridConfig.snapEnabled,
-    gridConfig.size,
+    config.snapEnabled,
+    config.size,
     true, // roomJoiningEnabled
     recalculateAllEnvelopes
   );
@@ -139,24 +144,22 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     editableDimensions.clearDimensionLabels();
 
     // Draw grid
-    drawGrid(ctx, viewport.viewport, gridConfig, rect.width, rect.height);
+    drawGrid(ctx, viewport.viewport, config, rect.width, rect.height);
 
-    // Draw envelopes FIRST (bottom layer) - but not while ANY room is being dragged
+    // Draw envelopes FIRST (bottom layer) - ALWAYS draw them to show walls during drag
     const isAnyRoomDragging = editorMode === EditorMode.Assembly && assemblyMode.dragState.isDragging;
-    if (!isAnyRoomDragging) {
-      rooms.forEach(room => {
-        drawEnvelope(ctx, room, viewport.viewport);
-      });
-    }
+    const isEditModeDragging = editorMode === EditorMode.Edit && editMode.dragState.isDragging;
 
-    // Draw rooms
     rooms.forEach(room => {
+      // Skip rendering walls for the selected room when dragging in edit mode
+      // (because they're not being updated during drag and would show stale positions)
       const isSelected = selection.isRoomSelected(room.id);
-      const isHover = selection.selection.hoverRoomId === room.id;
+      if (isEditModeDragging && isSelected) {
+        return; // Don't draw envelope (walls) for selected room during edit mode drag
+      }
 
-      // Check if this room is involved in snapping (any wall that will snap turns orange)
+      // Check if this room is involved in snapping (for orange wall highlight)
       let snapSegmentWorld: { p1: Vertex; p2: Vertex } | undefined;
-      let snapMode: 'edge-vertex' | 'vertex-only' | 'edge-only' | undefined;
 
       if (editorMode === EditorMode.Assembly && assemblyMode.lastSnapResult?.snapped) {
         const snapResult = assemblyMode.lastSnapResult;
@@ -164,30 +167,35 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         if (snapResult.mode === 'edge-vertex' || snapResult.mode === 'edge-only') {
           if (room.id === snapResult.movingRoomId) {
             snapSegmentWorld = snapResult.movingSegmentWorld;
-            snapMode = snapResult.mode;
           } else if (room.id === snapResult.stationaryRoomId) {
             snapSegmentWorld = snapResult.stationarySegmentWorld;
-            snapMode = snapResult.mode;
           }
         }
       }
 
-      // Draw room floor
+      // Draw envelope with snap information for orange highlight
+      // Pass isDragging flag to hide lines when dragging
+      // Pass showDebugLines from config
+      drawEnvelope(ctx, room, viewport.viewport, snapSegmentWorld, isAnyRoomDragging, config.showDebugLines ?? false);
+    });
+
+    // Draw apertures (doors/windows) on top of walls
+    // Must be drawn after envelope to be visible on black outer walls
+    rooms.forEach(room => {
+      drawApertures(ctx, room, viewport.viewport);
+    });
+
+    // Draw rooms
+    rooms.forEach(room => {
+      const isSelected = selection.isRoomSelected(room.id);
+      const isHover = selection.selection.hoverRoomId === room.id;
+
+      // Draw room floor (always draw all rooms, even during drag)
       drawRoom(ctx, room, viewport.viewport, {
         selected: isSelected,
-        strokeColor: isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#64748b'
+        strokeColor: isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#64748b',
+        selectedEdgeIndex: isSelected ? selection.selection.selectedEdgeIndex : null
       });
-
-      // Draw walls only while dragging (for UI guidance)
-      if (isAnyRoomDragging) {
-        drawWalls(ctx, room, viewport.viewport, {
-          selected: isSelected,
-          snapSegmentWorld,
-          snapMode,
-          selectedWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.selectedWallIndex : undefined,
-          hoverWallIndex: editorMode === EditorMode.Edit && isSelected ? selection.selection.hoverWallIndex : undefined
-        });
-      }
 
       // Draw dimension labels if enabled
       if (showDimensions) {
@@ -213,14 +221,14 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         viewport.viewport
       );
 
-      // Draw guide line
-      if (drawing.drawingState.activeGuideLine) {
+      // Draw guide line (if enabled)
+      if (config.showGuideLines !== false && drawing.drawingState.activeGuideLine) {
         drawGuideLine(ctx, drawing.drawingState.activeGuideLine, viewport.viewport);
       }
     }
 
-    // Draw assembly guide lines (in assembly mode)
-    if (editorMode === EditorMode.Assembly && assemblyMode.assemblyGuideLines.length > 0) {
+    // Draw assembly guide lines (in assembly mode, if enabled)
+    if (config.showGuideLines !== false && editorMode === EditorMode.Assembly && assemblyMode.assemblyGuideLines.length > 0) {
       assemblyMode.assemblyGuideLines.forEach(guideLine => {
         drawGuideLine(ctx, guideLine, viewport.viewport);
       });
@@ -291,7 +299,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
         });
       }
     }
-  }, [rooms, editorMode, gridConfig, viewport.viewport.x, viewport.viewport.y, viewport.viewport.zoom, drawing.drawingState, selection, floorplan, assemblyMode.dragState.dragType, assemblyMode.assemblyGuideLines, assemblyMode.lastSnapResult, selectionRectangle, showDimensions, editableDimensions]);
+  }, [rooms, editorMode, config, viewport.viewport.x, viewport.viewport.y, viewport.viewport.zoom, drawing.drawingState, selection, floorplan, assemblyMode.dragState.dragType, assemblyMode.assemblyGuideLines, assemblyMode.lastSnapResult, selectionRectangle, showDimensions, editableDimensions]);
 
   /**
    * Animation loop
@@ -375,8 +383,41 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
     if (editorMode === EditorMode.Edit) {
       const selectedRoom = getSelectedRoom();
       if (selectedRoom) {
-        // Add vertex at click position - addVertexToEdge will find closest edge
-        editMode.addVertexToClosestEdge(worldPoint);
+        // Convert to local coordinates and find closest edge
+        const localPoint = {
+          x: (worldPoint.x - selectedRoom.position.x) * Math.cos(-selectedRoom.rotation) -
+             (worldPoint.y - selectedRoom.position.y) * Math.sin(-selectedRoom.rotation),
+          y: (worldPoint.x - selectedRoom.position.x) * Math.sin(-selectedRoom.rotation) +
+             (worldPoint.y - selectedRoom.position.y) * Math.cos(-selectedRoom.rotation)
+        };
+
+        // Find closest edge
+        let minDistance = Infinity;
+        let closestEdge = 0;
+        for (let i = 0; i < selectedRoom.vertices.length; i++) {
+          const v1 = selectedRoom.vertices[i];
+          const v2 = selectedRoom.vertices[(i + 1) % selectedRoom.vertices.length];
+          const dx = v2.x - v1.x;
+          const dy = v2.y - v1.y;
+          const lengthSquared = dx * dx + dy * dy;
+
+          if (lengthSquared === 0) continue;
+
+          let t = ((localPoint.x - v1.x) * dx + (localPoint.y - v1.y) * dy) / lengthSquared;
+          t = Math.max(0, Math.min(1, t));
+
+          const projX = v1.x + t * dx;
+          const projY = v1.y + t * dy;
+          const dist = Math.hypot(localPoint.x - projX, localPoint.y - projY);
+
+          if (dist < minDistance) {
+            minDistance = dist;
+            closestEdge = i;
+          }
+        }
+
+        // Add vertex to the closest edge
+        editMode.addVertexToEdge(closestEdge, worldPoint);
       }
     }
   }, [editorMode, viewport, getSelectedRoom, editMode, rooms, selection, enterEditMode]);
@@ -426,16 +467,89 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       // Edit mode - vertex/edge/wall selection and dragging
       if (editorMode === EditorMode.Edit) {
         const selectedRoom = getSelectedRoom();
+
+        // HIGHEST PRIORITY: Check vertex hit first (with zoom-aware hit testing)
         if (selectedRoom) {
-          // Check vertex hit first (with zoom-aware hit testing)
           const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.viewport.zoom);
           if (vertexIndex !== -1) {
             selection.selectVertex(vertexIndex);
             editMode.startVertexDrag(vertexIndex, worldPoint, { x: screenX, y: screenY });
             return;
           }
+        }
 
-          // Check wall hit before edge (so wall inner edge doesn't trigger floor edge selection)
+        // Second priority: Check ALL room envelopes to see if click is in any envelope area
+        let clickedInEnvelopeArea = false;
+        for (const room of rooms) {
+          if (!room.envelopeVertices) continue;
+
+          const worldEnvelope = room.envelopeVertices.map(v =>
+            localToWorld(v, room.position, room.rotation, room.scale)
+          );
+          const worldRoomVertices = room.vertices.map(v =>
+            localToWorld(v, room.position, room.rotation, room.scale)
+          );
+
+          const insideEnvelope = pointInPolygon(worldPoint, worldEnvelope);
+          const insideRoom = pointInPolygon(worldPoint, worldRoomVertices);
+
+          if (insideEnvelope && !insideRoom) {
+            // Click is in the wall thickness area - find closest room edge across ALL rooms
+            let closestRoomId: string | null = null;
+            let closestEdgeIndex = -1;
+            let minDistance = Infinity;
+
+            rooms.forEach(room => {
+              // Use vertices for edge selection
+              const edgeVertices = room.vertices;
+
+              for (let i = 0; i < edgeVertices.length; i++) {
+                const v1Local = edgeVertices[i];
+                const v2Local = edgeVertices[(i + 1) % edgeVertices.length];
+
+                // Transform to world coordinates
+                const v1 = localToWorld(v1Local, room.position, room.rotation, room.scale);
+                const v2 = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+                // Calculate distance from point to edge segment
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+
+                if (len === 0) continue;
+
+                const t = Math.max(0, Math.min(1, ((worldPoint.x - v1.x) * dx + (worldPoint.y - v1.y) * dy) / (len * len)));
+                const projX = v1.x + t * dx;
+                const projY = v1.y + t * dy;
+                const dist = Math.sqrt((worldPoint.x - projX) ** 2 + (worldPoint.y - projY) ** 2);
+
+                if (dist < minDistance) {
+                  minDistance = dist;
+                  closestRoomId = room.id;
+                  closestEdgeIndex = i;
+                }
+              }
+            });
+
+            if (closestRoomId && closestEdgeIndex !== -1) {
+              console.log(`🎯 Clicked envelope area - Closest edge: Room ${closestRoomId}, Edge ${closestEdgeIndex}, Distance: ${minDistance.toFixed(2)}cm`);
+
+              // Select the room if not already selected
+              selection.selectRoom(closestRoomId);
+              // Select the edge
+              selection.selectEdge(closestEdgeIndex);
+              clickedInEnvelopeArea = true;
+              break;
+            }
+          }
+        }
+
+        if (clickedInEnvelopeArea) {
+          return;
+        }
+
+        if (selectedRoom) {
+          // Check regular wall hit
           const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
           if (wallIndex !== -1) {
             selection.selectWall(wallIndex);
@@ -443,7 +557,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
             return;
           }
 
-          // Check edge hit (floor polygon edges)
+          // Check edge hit (fallback if no walls)
           const edgeIndex = hitTestRoomEdges(worldPoint, selectedRoom);
           if (edgeIndex !== -1) {
             selection.selectEdge(edgeIndex);
@@ -555,6 +669,13 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
           return;
         }
 
+        // Check external wall hover first
+        const externalWallIndex = hitTestExternalWalls(worldPoint, selectedRoom);
+        if (externalWallIndex !== -1) {
+          selection.setHoverWall(externalWallIndex);
+          return;
+        }
+
         // Check wall hover before edge (same priority as click)
         const wallIndex = hitTestRoomWalls(worldPoint, selectedRoom);
         if (wallIndex !== -1) {
@@ -592,7 +713,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       if (selectedRoom && selectedRoomId && assemblyMode.dragState.dragType !== null) {
         if (assemblyMode.dragState.dragType === 'rotation') {
           // Update rotation
-          assemblyMode.updateRotation(selectedRoomId, selectedRoom, worldPoint, gridConfig.snapEnabled);
+          assemblyMode.updateRotation(selectedRoomId, selectedRoom, worldPoint, config.snapEnabled);
           return;
         } else if (assemblyMode.dragState.dragType === 'room') {
           // Update room drag
@@ -610,7 +731,7 @@ export const Canvas: React.FC<CanvasProps> = ({ floorplan, showDimensions = fals
       }
       return;
     }
-  }, [editorMode, viewport, drawing, editMode, assemblyMode, selection, rooms, getSelectedRoom, gridConfig.snapEnabled, selectionRectangle]);
+  }, [editorMode, viewport, drawing, editMode, assemblyMode, selection, rooms, getSelectedRoom, config.snapEnabled, selectionRectangle]);
 
   /**
    * Mouse up handler

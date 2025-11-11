@@ -27,36 +27,39 @@ const WALL_TYPE_COLORS: Record<WallType, string> = {
 export function drawEnvelope(
   ctx: CanvasRenderingContext2D,
   room: Room,
-  viewport: Viewport
+  viewport: Viewport,
+  snapSegmentWorld?: { p1: Vertex; p2: Vertex },
+  isDragging: boolean = false,
+  showDebugLines: boolean = false
 ): void {
   if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
 
   ctx.save();
 
-  // Transform envelope vertices to world coordinates
-  const worldEnvelope = room.envelopeVertices.map(v =>
-    localToWorld(v, room.position, room.rotation, room.scale)
-  );
+  // When dragging, skip drawing the outer envelope polygon
+  if (!isDragging) {
+    // Transform envelope vertices to world coordinates
+    const worldEnvelope = room.envelopeVertices.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
 
-  // Transform to screen coordinates
-  const screenEnvelope = worldEnvelope.map(v => worldToScreen(v, viewport));
+    // Transform to screen coordinates
+    const screenEnvelope = worldEnvelope.map(v => worldToScreen(v, viewport));
 
-  // Draw envelope with gray fill and black outline
-  ctx.fillStyle = '#94a3b8'; // Same gray as walls
-  ctx.strokeStyle = '#000000'; // Black
-  ctx.lineWidth = 1;
+    // Draw envelope with dark gray fill only (no outline)
+    ctx.fillStyle = '#1a1a1a'; // Very dark gray
 
-  ctx.beginPath();
-  ctx.moveTo(screenEnvelope[0].x, screenEnvelope[0].y);
-  for (let i = 1; i < screenEnvelope.length; i++) {
-    ctx.lineTo(screenEnvelope[i].x, screenEnvelope[i].y);
+    ctx.beginPath();
+    ctx.moveTo(screenEnvelope[0].x, screenEnvelope[0].y);
+    for (let i = 1; i < screenEnvelope.length; i++) {
+      ctx.lineTo(screenEnvelope[i].x, screenEnvelope[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
   }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
 
-  // DEBUG: Draw merged centerline result (before inflation) as pink dashed
-  if (room.debugMergedCenterline && room.debugMergedCenterline.length >= 3) {
+  // PINK LINE: Merged centerline (skip when dragging or debug disabled)
+  if (!isDragging && showDebugLines && room.debugMergedCenterline && room.debugMergedCenterline.length >= 3) {
     const worldCenterline = room.debugMergedCenterline.map(v =>
       localToWorld(v, room.position, room.rotation, room.scale)
     );
@@ -75,6 +78,299 @@ export function drawEnvelope(
     ctx.stroke();
 
     ctx.setLineDash([]); // Reset dash
+  }
+
+  // Only draw half-thickness walls when dragging (to show how they connect)
+  if (isDragging) {
+    drawWalls(ctx, room, viewport, {
+      snapSegmentWorld
+    });
+  }
+
+  // YELLOW LINE: Inner boundary of exterior walls (skip when dragging or debug disabled)
+  if (!isDragging && showDebugLines && room.innerBoundaryVertices && room.innerBoundaryVertices.length >= 3) {
+    const worldInnerBoundary = room.innerBoundaryVertices.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+    const screenInnerBoundary = worldInnerBoundary.map(v => worldToScreen(v, viewport));
+
+    ctx.strokeStyle = '#eab308'; // Yellow
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]); // Dashed line
+
+    ctx.beginPath();
+    ctx.moveTo(screenInnerBoundary[0].x, screenInnerBoundary[0].y);
+    for (let i = 1; i < screenInnerBoundary.length; i++) {
+      ctx.lineTo(screenInnerBoundary[i].x, screenInnerBoundary[i].y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.setLineDash([]); // Reset dash
+  }
+
+  // GREEN LINE: Contracted envelope (skip when dragging or debug disabled)
+  if (!isDragging && showDebugLines && room.debugContractedEnvelope && room.debugContractedEnvelope.length >= 3) {
+    const worldContracted = room.debugContractedEnvelope.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+    const screenContracted = worldContracted.map(v => worldToScreen(v, viewport));
+
+    ctx.strokeStyle = '#10b981'; // Green
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]); // Dashed line
+
+    ctx.beginPath();
+    ctx.moveTo(screenContracted[0].x, screenContracted[0].y);
+    for (let i = 1; i < screenContracted.length; i++) {
+      ctx.lineTo(screenContracted[i].x, screenContracted[i].y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.setLineDash([]); // Reset dash
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw apertures (doors and windows) on walls
+ * Should be called AFTER walls/envelope are drawn to ensure visibility
+ */
+export function drawApertures(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport
+): void {
+  if (!room.walls || room.walls.length === 0) {
+    console.log('🚪 drawApertures: No walls in room', room.id);
+    return;
+  }
+
+  ctx.save();
+
+  // Get vertices (use room vertices - the inner edge)
+  const sourceVertices = room.vertices;
+  if (!sourceVertices || sourceVertices.length < 3) {
+    console.log('🚪 drawApertures: Invalid vertices for room', room.id);
+    ctx.restore();
+    return;
+  }
+
+  // Transform to world coordinates
+  const worldVertices = sourceVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  // Count total apertures
+  let totalApertures = 0;
+  room.walls.forEach(w => totalApertures += (w.apertures?.length || 0));
+
+  if (totalApertures > 0) {
+    console.log(`🚪 drawApertures: Room ${room.id} has ${totalApertures} apertures across ${room.walls.length} walls`);
+  }
+
+  // Draw apertures for each wall
+  room.walls.forEach((wall, wallIndex) => {
+    if (!wall.apertures || wall.apertures.length === 0) return;
+
+    console.log(`  └─ Wall ${wallIndex}: ${wall.apertures.length} aperture(s)`);
+
+    // Get wall quad vertices
+    const [inner1, inner2] = getWallQuad(wall, worldVertices);
+
+    // Calculate wall direction along inner edge
+    const wallDx = inner2.x - inner1.x;
+    const wallDy = inner2.y - inner1.y;
+    const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+    if (wallLength === 0) return;
+
+    // Unit vector along wall
+    const unitX = wallDx / wallLength;
+    const unitY = wallDy / wallLength;
+
+    // Perpendicular vector pointing outward
+    const perpX = unitY;
+    const perpY = -unitX;
+
+    // Draw each aperture
+    for (const aperture of wall.apertures) {
+      // Convert aperture width from meters to pixels (1m = 100px)
+      const apertureWidthPx = aperture.width * 100;
+
+      // Calculate aperture position along wall
+      let startDist: number;
+      if (aperture.anchorVertex === 'end') {
+        startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+      } else {
+        startDist = aperture.distance * 100;
+      }
+      const endDist = startDist + apertureWidthPx;
+
+      // Aperture corners on room edge (inner edge)
+      const roomEdgeStart = {
+        x: inner1.x + unitX * startDist,
+        y: inner1.y + unitY * startDist
+      };
+      const roomEdgeEnd = {
+        x: inner1.x + unitX * endDist,
+        y: inner1.y + unitY * endDist
+      };
+
+      // Extend aperture outward from room edge
+      const apertureDepth = wall.thickness + 10;
+      const outerApertureStart = {
+        x: roomEdgeStart.x + perpX * apertureDepth,
+        y: roomEdgeStart.y + perpY * apertureDepth
+      };
+      const outerApertureEnd = {
+        x: roomEdgeEnd.x + perpX * apertureDepth,
+        y: roomEdgeEnd.y + perpY * apertureDepth
+      };
+
+      // Transform to screen coordinates
+      const screenRoomEdgeStart = worldToScreen(roomEdgeStart, viewport);
+      const screenRoomEdgeEnd = worldToScreen(roomEdgeEnd, viewport);
+      const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
+      const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
+
+      // Draw aperture as simple white rectangle
+      ctx.fillStyle = '#FFFFFF';
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 1;
+
+      ctx.beginPath();
+      ctx.moveTo(screenRoomEdgeStart.x, screenRoomEdgeStart.y);
+      ctx.lineTo(screenRoomEdgeEnd.x, screenRoomEdgeEnd.y);
+      ctx.lineTo(screenOuterApertureEnd.x, screenOuterApertureEnd.y);
+      ctx.lineTo(screenOuterApertureStart.x, screenOuterApertureStart.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      console.log(`     └─ ${aperture.type} drawn at screen coords:`, {
+        start: `(${Math.round(screenRoomEdgeStart.x)}, ${Math.round(screenRoomEdgeStart.y)})`,
+        end: `(${Math.round(screenRoomEdgeEnd.x)}, ${Math.round(screenRoomEdgeEnd.y)})`,
+        width: `${Math.round(apertureWidthPx)}px`,
+        depth: `${apertureDepth}cm`
+      });
+    }
+  });
+
+  ctx.restore();
+}
+
+/**
+ * Draw external walls using envelope vertex pairings
+ * Uses debugContractedEnvelope (inner edge) and envelopeVertices (outer edge)
+ */
+export function drawExternalWalls(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport,
+  options: {
+    selectedWallIndex?: number | null;
+    hoverWallIndex?: number | null;
+  } = {}
+): void {
+  if (!room.envelopeVertices || !room.debugContractedEnvelope) return;
+  if (room.envelopeVertices.length !== room.debugContractedEnvelope.length) return;
+  if (!room.walls || room.walls.length === 0) return;
+
+  ctx.save();
+
+  // Transform both envelopes to world coordinates
+  const outerWorld = room.envelopeVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+  const innerWorld = room.debugContractedEnvelope.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  const n = outerWorld.length;
+
+  // Draw each wall quadrilateral
+  for (let i = 0; i < n; i++) {
+    // Find the wall index for this edge
+    const wallIndex = room.walls.findIndex(w => w.vertexIndex === i);
+    if (wallIndex === -1) continue;
+
+    const wall = room.walls[wallIndex];
+
+    // Check if this wall is selected or hovered
+    const isSelected = options.selectedWallIndex !== undefined &&
+                       options.selectedWallIndex !== null &&
+                       wallIndex === options.selectedWallIndex;
+    const isHover = options.hoverWallIndex !== undefined &&
+                    options.hoverWallIndex !== null &&
+                    wallIndex === options.hoverWallIndex;
+
+    // Get quadrilateral vertices
+    const innerStart = innerWorld[i];
+    const innerEnd = innerWorld[(i + 1) % n];
+    const outerEnd = outerWorld[(i + 1) % n];
+    const outerStart = outerWorld[i];
+
+    // Transform to screen coordinates
+    const screenInnerStart = worldToScreen(innerStart, viewport);
+    const screenInnerEnd = worldToScreen(innerEnd, viewport);
+    const screenOuterEnd = worldToScreen(outerEnd, viewport);
+    const screenOuterStart = worldToScreen(outerStart, viewport);
+
+    // Choose colors based on state and wall type
+    let strokeColor = '#475569'; // Darker gray
+    let lineWidth = 1;
+
+    // Create gradient or solid fill
+    let fillStyle: string | CanvasGradient;
+
+    if (isSelected) {
+      fillStyle = '#3b82f6'; // Blue for selected
+      strokeColor = '#2563eb';
+      lineWidth = 3;
+    } else if (isHover) {
+      fillStyle = '#60a5fa'; // Light blue for hover
+      strokeColor = '#3b82f6';
+      lineWidth = 2;
+    } else if (wall.wallType && WALL_TYPE_COLORS[wall.wallType]) {
+      // Simple: gradient from inner edge center to outer edge center
+      const innerCenterX = (screenInnerStart.x + screenInnerEnd.x) / 2;
+      const innerCenterY = (screenInnerStart.y + screenInnerEnd.y) / 2;
+      const outerCenterX = (screenOuterStart.x + screenOuterEnd.x) / 2;
+      const outerCenterY = (screenOuterStart.y + screenOuterEnd.y) / 2;
+
+      const gradient = ctx.createLinearGradient(
+        innerCenterX, innerCenterY,  // Inner edge center
+        outerCenterX, outerCenterY   // Outer edge center
+      );
+
+      gradient.addColorStop(0, '#64748b');  // Gray at inner edge
+      gradient.addColorStop(0.5, '#64748b'); // Keep gray for 50% of the wall
+      gradient.addColorStop(1, WALL_TYPE_COLORS[wall.wallType]); // Wall type color at outer edge
+
+      fillStyle = gradient;
+      strokeColor = WALL_TYPE_COLORS[wall.wallType];
+    } else {
+      fillStyle = '#64748b'; // Default gray
+    }
+
+    // Draw filled wall quad
+    ctx.fillStyle = fillStyle;
+    ctx.beginPath();
+    ctx.moveTo(screenInnerStart.x, screenInnerStart.y);
+    ctx.lineTo(screenInnerEnd.x, screenInnerEnd.y);
+    ctx.lineTo(screenOuterEnd.x, screenOuterEnd.y);
+    ctx.lineTo(screenOuterStart.x, screenOuterStart.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw outline
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
   }
 
   ctx.restore();
@@ -162,6 +458,7 @@ export function drawRoom(
     strokeColor?: string;
     lineWidth?: number;
     selected?: boolean;
+    selectedEdgeIndex?: number | null;
   } = {}
 ): void {
   if (room.vertices.length < 3) return;
@@ -184,10 +481,102 @@ export function drawRoom(
   ctx.closePath();
   ctx.fill();
 
-  // Draw stroke
-  ctx.strokeStyle = options.strokeColor || (options.selected ? '#3b82f6' : '#64748b');
-  ctx.lineWidth = options.lineWidth || (options.selected ? 3 : 2);
-  ctx.stroke();
+  // Draw edges individually to allow different colors per edge
+  const defaultStrokeColor = options.strokeColor || (options.selected ? '#3b82f6' : '#64748b');
+  const defaultLineWidth = options.lineWidth || (options.selected ? 3 : 2);
+  const goldColor = '#fbbf24'; // Gold color for selected edge
+
+  for (let i = 0; i < screenVertices.length; i++) {
+    const v1 = screenVertices[i];
+    const v2 = screenVertices[(i + 1) % screenVertices.length];
+
+    // Check if this edge is selected
+    const isSelectedEdge = options.selectedEdgeIndex !== undefined &&
+                          options.selectedEdgeIndex !== null &&
+                          options.selectedEdgeIndex === i;
+
+    ctx.strokeStyle = isSelectedEdge ? goldColor : defaultStrokeColor;
+    ctx.lineWidth = isSelectedEdge ? 4 : defaultLineWidth; // Thicker for selected edge
+
+    ctx.beginPath();
+    ctx.moveTo(v1.x, v1.y);
+    ctx.lineTo(v2.x, v2.y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw numbered circles at envelope vertices for debugging (blue exterior merged polygon)
+ */
+export function drawCenterlineVertexNumbers(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport
+): void {
+  if (!room.envelopeVertices || room.envelopeVertices.length === 0) return;
+
+  ctx.save();
+
+  room.envelopeVertices.forEach((vertex, index) => {
+    // Transform to world then screen coordinates
+    const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
+    const screenVertex = worldToScreen(worldVertex, viewport);
+
+    // Draw circle
+    ctx.beginPath();
+    ctx.arc(screenVertex.x, screenVertex.y, 20, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.7)'; // Blue with transparency
+    ctx.fill();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw vertex number
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(index.toString(), screenVertex.x, screenVertex.y);
+  });
+
+  ctx.restore();
+}
+
+/**
+ * Draw numbered circles at contracted envelope vertices for debugging (green merged polygon)
+ */
+export function drawContractedEnvelopeVertexNumbers(
+  ctx: CanvasRenderingContext2D,
+  room: Room,
+  viewport: Viewport
+): void {
+  if (!room.debugContractedEnvelope || room.debugContractedEnvelope.length === 0) return;
+
+  ctx.save();
+
+  room.debugContractedEnvelope.forEach((vertex, index) => {
+    // Transform to world then screen coordinates
+    const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
+    const screenVertex = worldToScreen(worldVertex, viewport);
+
+    // Draw circle
+    ctx.beginPath();
+    ctx.arc(screenVertex.x, screenVertex.y, 20, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.7)'; // Green with transparency
+    ctx.fill();
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw vertex number
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(index.toString(), screenVertex.x, screenVertex.y);
+  });
 
   ctx.restore();
 }
@@ -212,8 +601,12 @@ export function drawWalls(
 
   ctx.save();
 
+  // Walls are drawn from floor vertices to centerline (half thickness only)
+  // This shows how the two halves stick together when rooms connect
+  const sourceVertices = room.vertices;
+
   // Transform vertices to world coordinates
-  const worldVertices = room.vertices.map(v =>
+  const worldVertices = sourceVertices.map(v =>
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
@@ -232,8 +625,8 @@ export function drawWalls(
 
     room.walls.forEach((wall, wallIndex) => {
       // Get wall vertices in world space
-      const v1World = localToWorld(room.vertices[wall.vertexIndex], room.position, room.rotation, room.scale);
-      const v2World = localToWorld(room.vertices[(wall.vertexIndex + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+      const v1World = localToWorld(sourceVertices[wall.vertexIndex], room.position, room.rotation, room.scale);
+      const v2World = localToWorld(sourceVertices[(wall.vertexIndex + 1) % sourceVertices.length], room.position, room.rotation, room.scale);
 
       // Calculate wall midpoint
       const wallMid = {
@@ -356,110 +749,8 @@ export function drawWalls(
       }
     }
 
-    // Draw apertures (doors and windows) if any
-    if (wall.apertures && wall.apertures.length > 0) {
-      // Calculate wall direction along inner edge
-      const wallDx = inner2.x - inner1.x;
-      const wallDy = inner2.y - inner1.y;
-      const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
-
-      if (wallLength > 0) {
-        // Unit vector along wall
-        const unitX = wallDx / wallLength;
-        const unitY = wallDy / wallLength;
-
-        // Perpendicular vector pointing outward
-        const perpX = unitY;
-        const perpY = -unitX;
-
-        ctx.save();
-        ctx.shadowBlur = 0; // No shadow for apertures
-
-        for (const aperture of wall.apertures) {
-          // Convert aperture width from meters to pixels (1m = 100px)
-          const apertureWidthPx = aperture.width * 100;
-
-          // Calculate aperture position along wall
-          let startDist: number;
-          if (aperture.anchorVertex === 'end') {
-            startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
-          } else {
-            startDist = aperture.distance * 100;
-          }
-          const endDist = startDist + apertureWidthPx;
-
-          // Aperture corners on inner edge
-          const innerApertureStart = {
-            x: inner1.x + unitX * startDist,
-            y: inner1.y + unitY * startDist
-          };
-          const innerApertureEnd = {
-            x: inner1.x + unitX * endDist,
-            y: inner1.y + unitY * endDist
-          };
-
-          // Aperture corners on outer edge
-          const outerApertureStart = {
-            x: innerApertureStart.x + perpX * wall.thickness,
-            y: innerApertureStart.y + perpY * wall.thickness
-          };
-          const outerApertureEnd = {
-            x: innerApertureEnd.x + perpX * wall.thickness,
-            y: innerApertureEnd.y + perpY * wall.thickness
-          };
-
-          // Transform to screen coordinates
-          const screenInnerApertureStart = worldToScreen(innerApertureStart, viewport);
-          const screenInnerApertureEnd = worldToScreen(innerApertureEnd, viewport);
-          const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
-          const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
-
-          // Draw aperture as white rectangle (creates opening)
-          ctx.fillStyle = '#FFFFFF';
-          ctx.globalAlpha = 1;
-
-          ctx.beginPath();
-          ctx.moveTo(screenInnerApertureStart.x, screenInnerApertureStart.y);
-          ctx.lineTo(screenInnerApertureEnd.x, screenInnerApertureEnd.y);
-          ctx.lineTo(screenOuterApertureEnd.x, screenOuterApertureEnd.y);
-          ctx.lineTo(screenOuterApertureStart.x, screenOuterApertureStart.y);
-          ctx.closePath();
-          ctx.fill();
-
-          // Draw door arc if it's a door
-          if (aperture.type === 'door') {
-            ctx.strokeStyle = '#666666';
-            ctx.lineWidth = 1 / viewport.zoom;
-            ctx.globalAlpha = 0.5;
-
-            const arcRadius = apertureWidthPx * viewport.zoom;
-            const baseAngle = Math.atan2(perpY, perpX);
-
-            ctx.beginPath();
-            ctx.arc(
-              screenInnerApertureStart.x,
-              screenInnerApertureStart.y,
-              arcRadius,
-              baseAngle - Math.PI / 2,
-              baseAngle,
-              false
-            );
-            ctx.stroke();
-
-            // Draw door panel line
-            ctx.beginPath();
-            ctx.moveTo(screenInnerApertureStart.x, screenInnerApertureStart.y);
-            ctx.lineTo(
-              screenInnerApertureStart.x + Math.cos(baseAngle - Math.PI / 4) * arcRadius,
-              screenInnerApertureStart.y + Math.sin(baseAngle - Math.PI / 4) * arcRadius
-            );
-            ctx.stroke();
-          }
-        }
-
-        ctx.restore();
-      }
-    }
+    // NOTE: Aperture rendering has been moved to dedicated drawApertures() function
+    // which is called separately in Canvas.tsx to ensure proper rendering order
   });
 
   ctx.restore();
@@ -477,10 +768,12 @@ export function drawVertexHandles(
     hoverIndex?: number | null;
     handleSize?: number;
     touchTargetSize?: number;
+    color?: string;
   } = {}
 ): void {
   const handleSize = options.handleSize || 8;
   const touchTargetSize = options.touchTargetSize || 20;
+  const baseColor = options.color || '#3b82f6'; // Default blue
 
   ctx.save();
 
@@ -492,12 +785,12 @@ export function drawVertexHandles(
     // Draw larger transparent touch target circle
     // Make it more visible on hover to show it's interactive
     if (isHover || isSelected) {
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+      ctx.fillStyle = `${baseColor}33`; // 20% opacity
+      ctx.strokeStyle = `${baseColor}66`; // 40% opacity
       ctx.lineWidth = 2;
     } else {
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
+      ctx.fillStyle = `${baseColor}1A`; // 10% opacity
+      ctx.strokeStyle = `${baseColor}33`; // 20% opacity
       ctx.lineWidth = 1;
     }
 
@@ -507,8 +800,8 @@ export function drawVertexHandles(
     ctx.stroke();
 
     // Draw visible handle on top
-    ctx.fillStyle = isSelected ? '#3b82f6' : isHover ? '#60a5fa' : '#ffffff';
-    ctx.strokeStyle = '#1e40af';
+    ctx.fillStyle = isSelected ? baseColor : isHover ? `${baseColor}CC` : '#ffffff';
+    ctx.strokeStyle = baseColor;
     ctx.lineWidth = 2;
 
     ctx.beginPath();

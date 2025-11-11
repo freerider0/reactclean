@@ -80,6 +80,7 @@ export interface Wall {
   normal?: Vertex;      // Perpendicular vector pointing outward
   startCorner?: Vertex; // Intersection point at start (for mitered corners)
   endCorner?: Vertex;   // Intersection point at end (for mitered corners)
+  roomEdgeIndex?: number; // Maps envelope wall to room edge (for wall type classification)
 }
 
 export interface Room {
@@ -88,10 +89,13 @@ export interface Room {
 
   // Geometry (local coordinates)
   vertices: Vertex[];  // Inner floor boundary
-  centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness)
+  originalVertices?: Vertex[];  // Original vertices before auto-insertion from merging (for reset on re-merge)
+  centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness) - PINK LINE
+  innerBoundaryVertices?: Vertex[];  // Inner boundary of exterior walls (centerline + interior wall thickness) - YELLOW LINE
   walls: Wall[];
   envelopeVertices?: Vertex[];  // Outer boundary from polygon merging (inflated)
   debugMergedCenterline?: Vertex[];  // DEBUG: Merged centerline before inflation
+  debugContractedEnvelope?: Vertex[];  // DEBUG: Envelope contracted back to room perimeter
 
   // Assembly transform (world coordinates)
   position: Vertex;
@@ -158,15 +162,33 @@ export interface GuideLine {
 }
 
 // ============================================================================
-// GRID CONFIG
+// FLOORPLAN CONFIG
 // ============================================================================
 
-export interface GridConfig {
+export interface FloorplanConfig {
+  // Grid settings
   enabled: boolean;
   size: number;        // Grid size in cm
   majorLines: number;  // Draw major line every N grid lines
   snapEnabled: boolean;
+  orthogonalSnapEnabled?: boolean; // Enable/disable orthogonal snapping
+
+  // Visibility settings
+  showGuideLines?: boolean; // Show/hide guide lines
+  showEnvelopeVertices?: boolean; // Show/hide envelope vertices
+  showDebugLines?: boolean; // Show/hide debug lines (pink centerline, yellow inner boundary, green contracted)
+  showDimensions?: boolean; // Show/hide wall dimensions
+
+  // Wall thickness settings
+  defaultInteriorWallThickness: number; // Default interior wall thickness in cm
+  defaultExteriorWallThickness: number; // Default exterior wall thickness in cm
+
+  // Rendering settings
+  miterLimit?: number; // Clipper miter limit (1.0-10.0), controls when beveling occurs
 }
+
+// Legacy type alias for backwards compatibility
+export type GridConfig = FloorplanConfig;
 
 // ============================================================================
 // DRAWING STATE

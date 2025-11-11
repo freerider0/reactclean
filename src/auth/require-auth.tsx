@@ -13,24 +13,13 @@ export const RequireAuth = () => {
   const { session, isLoading, user } = useAuth();
   const location = useLocation();
 
-  // Debug logging
-  console.log('[RequireAuth]', {
-    isLoading,
-    hasSession: !!session,
-    hasUser: !!user,
-    userId: user?.id,
-    path: location.pathname,
-  });
-
   // Show screen loader while checking authentication
   if (isLoading) {
-    console.log('[RequireAuth] Still loading, showing loader...');
     return <ScreenLoader />;
   }
 
   // If not authenticated, redirect to login
   if (!session) {
-    console.log('[RequireAuth] No session, redirecting to signin...');
     return (
       <Navigate
         to={`/auth/signin?next=${encodeURIComponent(location.pathname)}`}
@@ -39,7 +28,6 @@ export const RequireAuth = () => {
     );
   }
 
-  console.log('[RequireAuth] Authenticated, showing protected route');
   // If authenticated, render child routes
   return <Outlet />;
 };

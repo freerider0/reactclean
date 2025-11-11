@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Room, EditorMode, ToolMode, GridConfig } from '../types';
+import { Room, EditorMode, ToolMode, FloorplanConfig } from '../types';
 import type { GeoReference } from '../types/geo';
 import { useViewport } from './useViewport';
 import { useDrawing } from './useDrawing';
@@ -13,12 +13,28 @@ import { useHistory } from './useHistory';
 import { supabase } from '@/lib/supabase';
 import { calculateFloorplanEnvelopes } from '../utils/geometry';
 import { calculateCenterline } from '../utils/roomJoining';
+import { generateWalls } from '../utils/walls';
 
-const DEFAULT_GRID_CONFIG: GridConfig = {
+const DEFAULT_FLOORPLAN_CONFIG: FloorplanConfig = {
+  // Grid settings
   enabled: true,
   size: 50, // 50cm grid
   majorLines: 5, // Major line every 250cm (2.5m)
-  snapEnabled: true
+  snapEnabled: false,
+  orthogonalSnapEnabled: false,
+
+  // Visibility settings
+  showGuideLines: false,
+  showEnvelopeVertices: true,
+  showDebugLines: false, // Hide debug lines (pink, yellow, green) by default
+  showDimensions: false, // Hide dimensions by default
+
+  // Wall thickness settings
+  defaultInteriorWallThickness: 15, // 15cm
+  defaultExteriorWallThickness: 30, // 30cm
+
+  // Rendering settings
+  miterLimit: 2.0 // Default miter limit
 };
 
 interface UseFloorplanOptions {
@@ -40,6 +56,7 @@ export function useFloorplan(
   // Rooms state
   const [rooms, setRooms] = useState<Room[]>([]);
   const roomsRef = useRef<Room[]>([]);
+  const previousRoomCountRef = useRef(0);
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -52,11 +69,13 @@ export function useFloorplan(
   // Editor state
   const [editorMode, setEditorMode] = useState<EditorMode>(EditorMode.Draw);
   const [toolMode, setToolMode] = useState<ToolMode>(ToolMode.DrawRoom);
-  const [gridConfig, setGridConfig] = useState<GridConfig>(DEFAULT_GRID_CONFIG);
+  const [config, setConfig] = useState<FloorplanConfig>(DEFAULT_FLOORPLAN_CONFIG);
+  const configRef = useRef<FloorplanConfig>(DEFAULT_FLOORPLAN_CONFIG);
 
-  // Wall thickness defaults (in cm)
-  const [defaultInteriorWallThickness, setDefaultInteriorWallThickness] = useState<number>(15);
-  const [defaultExteriorWallThickness, setDefaultExteriorWallThickness] = useState<number>(30);
+  // Keep config ref in sync with state
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   // GeoReference state
   const [geoReference, setGeoReference] = useState<GeoReference | undefined>(initialGeoRef);
@@ -106,9 +125,10 @@ export function useFloorplan(
 
   // Drawing hook with room creation callback
   const drawing = useDrawing(
-    gridConfig,
+    config,
     viewport.viewport.zoom,
-    createRoom
+    createRoom,
+    rooms
   );
 
   /**
@@ -123,7 +143,12 @@ export function useFloorplan(
 
         // Recalculate centerlineVertices if vertices or wallThickness changed
         if (updates.vertices || updates.wallThickness || updates.walls) {
+          const oldCenterline = updatedRoom.centerlineVertices;
           updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+          console.log(`🔧 updateRoom: Recalculated centerline for room ${roomId}`);
+          console.log(`  Old centerline: ${oldCenterline.length} vertices`);
+          console.log(`  New centerline: ${updatedRoom.centerlineVertices.length} vertices`);
+          console.log(`  New vertices: ${updatedRoom.vertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3)}`);
         }
 
         return updatedRoom;
@@ -245,10 +270,8 @@ export function useFloorplan(
       exportDate: new Date().toISOString(),
       propertyId, // Include propertyId in exported data
       rooms,
-      gridConfig,
-      geoReference, // Include geo reference
-      defaultInteriorWallThickness,
-      defaultExteriorWallThickness
+      config, // All configuration in one object
+      geoReference // Include geo reference
     };
 
     const json = JSON.stringify(data, null, 2);
@@ -265,7 +288,7 @@ export function useFloorplan(
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [rooms, gridConfig, propertyId, geoReference, defaultInteriorWallThickness, defaultExteriorWallThickness]);
+  }, [rooms, config, propertyId, geoReference]);
 
   /**
    * Save floorplan to Supabase Storage
@@ -283,10 +306,8 @@ export function useFloorplan(
         savedDate: new Date().toISOString(),
         propertyId,
         rooms,
-        gridConfig,
-        geoReference, // Include geo reference
-        defaultInteriorWallThickness,
-        defaultExteriorWallThickness
+        config, // All configuration in one object
+        geoReference // Include geo reference
       };
 
       // Convert to JSON blob
@@ -325,7 +346,7 @@ export function useFloorplan(
       console.error('❌ Failed to save floorplan:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
-  }, [propertyId, rooms, gridConfig, geoReference, defaultInteriorWallThickness, defaultExteriorWallThickness]);
+  }, [propertyId, rooms, config, geoReference]);
 
   /**
    * Import floorplan from JSON
@@ -358,22 +379,31 @@ export function useFloorplan(
 
         setRooms(importedRooms);
 
-        // Import grid config if present
-        if (data.gridConfig) {
-          setGridConfig(data.gridConfig);
+        // Import config - support both new and old formats
+        if (data.config) {
+          // New format: single config object
+          setConfig(data.config);
+        } else {
+          // Old format: separate gridConfig and wall thicknesses
+          const importedConfig: FloorplanConfig = {
+            ...DEFAULT_FLOORPLAN_CONFIG,
+            ...(data.gridConfig || {})
+          };
+
+          // Merge old wall thickness properties if present
+          if (data.defaultInteriorWallThickness !== undefined) {
+            importedConfig.defaultInteriorWallThickness = data.defaultInteriorWallThickness;
+          }
+          if (data.defaultExteriorWallThickness !== undefined) {
+            importedConfig.defaultExteriorWallThickness = data.defaultExteriorWallThickness;
+          }
+
+          setConfig(importedConfig);
         }
 
         // Import geo reference if present
         if (data.geoReference) {
           setGeoReference(data.geoReference);
-        }
-
-        // Import default wall thicknesses if present
-        if (data.defaultInteriorWallThickness !== undefined) {
-          setDefaultInteriorWallThickness(data.defaultInteriorWallThickness);
-        }
-        if (data.defaultExteriorWallThickness !== undefined) {
-          setDefaultExteriorWallThickness(data.defaultExteriorWallThickness);
         }
 
         // Clear selection and reset view
@@ -388,24 +418,15 @@ export function useFloorplan(
   }, [selection, viewport]);
 
   /**
-   * Update grid configuration
+   * Update floorplan configuration
    */
-  const updateGridConfig = useCallback((updates: Partial<GridConfig>) => {
-    setGridConfig(prev => ({ ...prev, ...updates }));
-  }, []);
-
-  /**
-   * Toggle grid visibility
-   */
-  const toggleGrid = useCallback(() => {
-    setGridConfig(prev => ({ ...prev, enabled: !prev.enabled }));
-  }, []);
-
-  /**
-   * Toggle grid snap
-   */
-  const toggleGridSnap = useCallback(() => {
-    setGridConfig(prev => ({ ...prev, snapEnabled: !prev.snapEnabled }));
+  const updateConfig = useCallback((updates: Partial<FloorplanConfig>) => {
+    setConfig(prev => {
+      const newConfig = { ...prev, ...updates };
+      // Update ref immediately for synchronous access
+      configRef.current = newConfig;
+      return newConfig;
+    });
   }, []);
 
   /**
@@ -460,23 +481,95 @@ export function useFloorplan(
   const recalculateAllEnvelopes = useCallback(async () => {
     // Use ref to get the absolute latest room state (even if setState hasn't flushed)
     const currentRooms = roomsRef.current;
+    const currentConfig = configRef.current;
     console.log('🔄 Recalculating envelopes for', currentRooms.length, 'rooms');
+    console.log('📊 Room states before envelope calculation:');
+    currentRooms.forEach(r => {
+      console.log(`  Room ${r.id}:`);
+      console.log(`    vertices: ${r.vertices.length}`, r.vertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3));
+      console.log(`    centerlineVertices: ${r.centerlineVertices.length}`, r.centerlineVertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3));
+    });
+    console.log('🔧 Using wall thicknesses:', {
+      interior: currentConfig.defaultInteriorWallThickness,
+      exterior: currentConfig.defaultExteriorWallThickness,
+      miterLimit: currentConfig.miterLimit ?? 2.0
+    });
 
     // Calculate envelopes using the latest room state (async with Clipper WebAssembly)
-    const envelopeMap = await calculateFloorplanEnvelopes(currentRooms);
+    const envelopeMap = await calculateFloorplanEnvelopes(
+      currentRooms,
+      currentConfig.miterLimit ?? 2.0,
+      currentConfig.defaultInteriorWallThickness,
+      currentConfig.defaultExteriorWallThickness
+    );
 
-    // Update rooms with envelope data
-    setRooms(prev => prev.map(room => {
+    // Update rooms with envelope data AND auto-classified walls
+    // IMPORTANT: Use roomsRef.current instead of prev to get the absolute latest state
+    // This ensures constraint-solved vertices are preserved when recalculating envelopes
+    const updated = roomsRef.current.map(room => {
       const result = envelopeMap.get(room.id);
       if (result) {
-        return {
+        console.log(`✨ Room ${room.id}: envelope updated`);
+        console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
+
+        // Use walls generated from envelope (already includes wall types and proper edge mapping)
+        console.log(`  → room.vertices: ${room.vertices.length}, centerlineVertices: ${room.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
+        console.log(`  → Using ${result.walls.length} walls from envelope (already classified)`);
+
+        const walls = result.walls;
+
+        console.log(`  → Wall types:`, walls.map(w => w.wallType).join(', '));
+
+        // Check if vertices were updated by collinear vertex insertion
+        let updatedRoom = {
           ...room,
           envelopeVertices: result.envelope,
-          debugMergedCenterline: result.debugCenterline
+          innerBoundaryVertices: result.innerBoundary,
+          debugMergedCenterline: result.debugCenterline,
+          debugContractedEnvelope: result.debugContracted,
+          walls
         };
+
+        if (result.updatedVertices) {
+          // New vertices were inserted from merge
+          console.log(`  ⭐ Vertices updated: ${room.vertices.length} → ${result.updatedVertices.length}`);
+          updatedRoom = {
+            ...updatedRoom,
+            vertices: result.updatedVertices,
+            originalVertices: room.originalVertices || [...room.vertices], // Preserve or initialize original vertices
+            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: result.updatedVertices }),
+            walls: generateWalls(
+              result.updatedVertices,
+              room.wallThickness,
+              room.walls,
+              room.vertices // Pass original vertices for matching
+            )
+          };
+        } else if (room.originalVertices && room.vertices.length > room.originalVertices.length) {
+          // No new vertices from merge, but room has auto-inserted vertices that should be removed
+          // This happens when rooms separate OR when merge changes but doesn't create new intersections
+          console.log(`  🔄 ${room.id}: Resetting to original vertices (${room.vertices.length} → ${room.originalVertices.length})`);
+          updatedRoom = {
+            ...updatedRoom,
+            vertices: [...room.originalVertices],
+            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: room.originalVertices }),
+            walls: generateWalls(
+              room.originalVertices,
+              room.wallThickness,
+              room.walls,
+              room.vertices // Pass current vertices for matching
+            )
+          };
+        }
+
+        return updatedRoom;
       }
       return room;
-    }));
+    });
+
+    // Update both state and ref
+    roomsRef.current = updated;
+    setRooms(updated);
   }, []);
 
   /**
@@ -510,16 +603,41 @@ export function useFloorplan(
     }
   }, [history, selection]);
 
+  // Auto-select, calculate walls, and enter edit mode when a new room is created in Draw mode
+  useEffect(() => {
+    const currentRoomCount = rooms.length;
+    const previousRoomCount = previousRoomCountRef.current;
+
+    // Check if a new room was added while in Draw mode
+    if (editorMode === EditorMode.Draw && currentRoomCount > previousRoomCount) {
+      const newRoom = rooms[rooms.length - 1];
+
+      console.log('🆕 New room created, auto-entering edit mode:', newRoom.id);
+
+      // Select the newly created room
+      selection.selectRoom(newRoom.id);
+
+      // Calculate walls asynchronously
+      recalculateAllEnvelopes().then(() => {
+        console.log('✅ Walls calculated, entering edit mode');
+        // Enter edit mode after walls are calculated
+        setEditorMode(EditorMode.Edit);
+        setToolMode(ToolMode.Select);
+      });
+    }
+
+    // Update previous count
+    previousRoomCountRef.current = currentRoomCount;
+  }, [rooms.length, editorMode, selection, recalculateAllEnvelopes]);
+
   return {
     // State
     rooms,
     editorMode,
     toolMode,
-    gridConfig,
+    config,
     geoReference,
     spacePressed,
-    defaultInteriorWallThickness,
-    defaultExteriorWallThickness,
 
     // Hooks
     viewport,
@@ -545,14 +663,8 @@ export function useFloorplan(
     importFloorplan,
     saveFloorplan,
 
-    // Grid operations
-    updateGridConfig,
-    toggleGrid,
-    toggleGridSnap,
-
-    // Wall thickness operations
-    setDefaultInteriorWallThickness,
-    setDefaultExteriorWallThickness,
+    // Configuration operations
+    updateConfig,
 
     // GeoReference operations
     setGeoReference,

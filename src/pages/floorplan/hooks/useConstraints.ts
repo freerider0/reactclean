@@ -37,6 +37,7 @@ export interface UseConstraintsProps {
   rooms: Room[];
   selectedRoomId: string | null;
   updateRoom: (roomId: string, updates: Partial<Room>) => void;
+  recalculateEnvelopes?: () => Promise<void>;
 }
 
 /**
@@ -45,7 +46,8 @@ export interface UseConstraintsProps {
 export function useConstraints({
   rooms,
   selectedRoomId,
-  updateRoom
+  updateRoom,
+  recalculateEnvelopes
 }: UseConstraintsProps): UseConstraintsResult {
   const [isSolving, setIsSolving] = useState(false);
 
@@ -93,12 +95,27 @@ export function useConstraints({
     setIsSolving(true);
     try {
       const solvedRoom = await solveRoom(updatedRoom);
+
+      console.log('✅ Constraint solved, updating room vertices...');
+      console.log('  Old vertices:', room.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+      console.log('  New vertices:', solvedRoom.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+
       updateRoom(roomId, {
         vertices: solvedRoom.vertices,
         walls: solvedRoom.walls,
         constraints: solvedRoom.constraints,
         primitives: solvedRoom.primitives
       });
+
+      // Small delay to ensure state updates are flushed
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Recalculate envelope after constraint solving
+      if (recalculateEnvelopes) {
+        console.log('🔄 Recalculating envelopes after constraint solving...');
+        await recalculateEnvelopes();
+        console.log('✨ Envelope recalculation complete');
+      }
     } catch (error) {
       console.error('Error auto-solving after adding constraint:', error);
       // Fallback: just add the constraint without solving
@@ -108,7 +125,7 @@ export function useConstraints({
     } finally {
       setIsSolving(false);
     }
-  }, [rooms, updateRoom, generateConstraintId]);
+  }, [rooms, updateRoom, generateConstraintId, recalculateEnvelopes]);
 
   /**
    * Add distance constraint between two vertices
@@ -239,6 +256,12 @@ export function useConstraints({
         constraints: solvedRoom.constraints,
         primitives: solvedRoom.primitives
       });
+
+      // Recalculate envelope after constraint solving
+      if (recalculateEnvelopes) {
+        console.log('🔄 Recalculating envelopes after toggling constraint...');
+        await recalculateEnvelopes();
+      }
     } catch (error) {
       console.error('Error auto-solving after toggling constraint:', error);
       // Fallback: just toggle without solving
@@ -248,7 +271,7 @@ export function useConstraints({
     } finally {
       setIsSolving(false);
     }
-  }, [rooms, updateRoom]);
+  }, [rooms, updateRoom, recalculateEnvelopes]);
 
   /**
    * Solve constraints for a room
@@ -269,12 +292,18 @@ export function useConstraints({
         walls: solvedRoom.walls,
         primitives: solvedRoom.primitives
       });
+
+      // Recalculate envelope after constraint solving
+      if (recalculateEnvelopes) {
+        console.log('🔄 Recalculating envelopes after manual constraint solving...');
+        await recalculateEnvelopes();
+      }
     } catch (error) {
       console.error('Error solving constraints:', error);
     } finally {
       setIsSolving(false);
     }
-  }, [rooms, updateRoom]);
+  }, [rooms, updateRoom, recalculateEnvelopes]);
 
   return {
     addDistanceConstraint,

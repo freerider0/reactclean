@@ -6,7 +6,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { Vertex, Room, DragState } from '../types';
 import { snapToGrid } from '../utils/snapping';
-import { distance, recenterVertices } from '../utils/geometry';
+import { distance, recenterVertices, distanceToSegment } from '../utils/geometry';
 import { localToWorld, worldToLocal } from '../utils/coordinates';
 import { generateWalls } from '../utils/walls';
 import { solveRoom } from '../utils/constraintSolver';
@@ -166,10 +166,8 @@ export function useEditMode(
           position: newPosition,
           primitives: solvedRoom.primitives
         });
-        // Recalculate envelopes immediately after vertex update
-        if (recalculateAllEnvelopes) {
-          await recalculateAllEnvelopes();
-        }
+        // DON'T recalculate envelopes during drag - causes race conditions
+        // Envelope will be recalculated when drag ends in endVertexDrag()
       }).catch(error => {
         console.error('Error solving during vertex drag:', error);
         // Fallback: update without solving
@@ -178,10 +176,7 @@ export function useEditMode(
           walls: newWalls,
           position: newPosition
         });
-        // Recalculate envelopes even on fallback
-        if (recalculateAllEnvelopes) {
-          recalculateAllEnvelopes();
-        }
+        // DON'T recalculate envelopes during drag - causes race conditions
       });
     } else {
       // No constraints, just update normally
@@ -190,10 +185,8 @@ export function useEditMode(
         walls: newWalls,
         position: newPosition
       });
-      // Recalculate envelopes immediately after vertex update
-      if (recalculateAllEnvelopes) {
-        recalculateAllEnvelopes();
-      }
+      // DON'T recalculate envelopes during drag - causes race conditions
+      // Envelope will be recalculated when drag ends in endVertexDrag()
     }
   }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
@@ -208,7 +201,19 @@ export function useEditMode(
       originalVertices: undefined
     });
     dragStartRef.current = null;
-  }, []);
+
+    // Update originalVertices after manual drag completes
+    if (selectedRoom) {
+      updateRoom(selectedRoom.id, {
+        originalVertices: selectedRoom.vertices.map(v => ({ ...v }))
+      });
+    }
+
+    // Recalculate envelopes after drag completes
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * Start dragging an edge
@@ -335,10 +340,8 @@ export function useEditMode(
       position: newPosition
     });
 
-    // Recalculate envelopes immediately after edge update
-    if (recalculateAllEnvelopes) {
-      recalculateAllEnvelopes();
-    }
+    // DON'T recalculate envelopes during drag - causes race conditions
+    // Envelope will be recalculated when drag ends in endEdgeDrag()
   }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
   /**
@@ -352,112 +355,20 @@ export function useEditMode(
       originalVertices: undefined
     });
     dragStartRef.current = null;
-  }, []);
 
-  /**
-   * Find closest edge to a point
-   * Copied from original AddVertexCommand.ts:115
-   */
-  const findClosestEdgeIndex = useCallback((point: Vertex, vertices: Vertex[]): number => {
-    let minDistance = Infinity;
-    let closestEdge = 0;
-
-    for (let i = 0; i < vertices.length; i++) {
-      const v1 = vertices[i];
-      const v2 = vertices[(i + 1) % vertices.length];
-
-      // Calculate distance from point to line segment
-      const dx = v2.x - v1.x;
-      const dy = v2.y - v1.y;
-      const length = Math.sqrt(dx * dx + dy * dy);
-
-      if (length === 0) {
-        const dist = Math.hypot(point.x - v1.x, point.y - v1.y);
-        if (dist < minDistance) {
-          minDistance = dist;
-          closestEdge = i;
-        }
-        continue;
-      }
-
-      const t = Math.max(0, Math.min(1,
-        ((point.x - v1.x) * dx + (point.y - v1.y) * dy) / (length * length)
-      ));
-
-      const projection = {
-        x: v1.x + t * dx,
-        y: v1.y + t * dy
-      };
-
-      const dist = Math.hypot(point.x - projection.x, point.y - projection.y);
-
-      if (dist < minDistance) {
-        minDistance = dist;
-        closestEdge = i;
-      }
+    // Update originalVertices after manual drag completes
+    if (selectedRoom) {
+      updateRoom(selectedRoom.id, {
+        originalVertices: selectedRoom.vertices.map(v => ({ ...v }))
+      });
     }
 
-    return closestEdge;
-  }, []);
-
-  /**
-   * Add vertex at closest edge to world point
-   * Adapted from original AddVertexCommand.ts
-   */
-  const addVertexToClosestEdge = useCallback((worldPoint: Vertex) => {
-    if (!selectedRoom) return;
-
-    // Convert to local coordinates
-    const localPoint = worldToLocal(
-      worldPoint,
-      selectedRoom.position,
-      selectedRoom.rotation,
-      selectedRoom.scale
-    );
-
-    // Find closest edge
-    const closestEdgeIndex = findClosestEdgeIndex(localPoint, selectedRoom.vertices);
-
-    // Insert vertex after closest edge
-    const newVertices = [...selectedRoom.vertices];
-    newVertices.splice(closestEdgeIndex + 1, 0, localPoint);
-
-    // Recenter vertices to maintain rotation around centroid
-    const { centeredVertices, localOffset } = recenterVertices(newVertices);
-
-    // Transform local offset to world space
-    const cos = Math.cos(selectedRoom.rotation);
-    const sin = Math.sin(selectedRoom.rotation);
-    const worldOffset = {
-      x: localOffset.x * cos - localOffset.y * sin,
-      y: localOffset.x * sin + localOffset.y * cos
-    };
-
-    // Update position to account for recentering
-    const newPosition = {
-      x: selectedRoom.position.x + worldOffset.x,
-      y: selectedRoom.position.y + worldOffset.y
-    };
-
-    // Regenerate walls (preserve existing wall properties by matching vertex positions)
-    const newWalls = generateWalls(
-      centeredVertices,
-      selectedRoom.wallThickness,
-      selectedRoom.walls,
-      selectedRoom.vertices // Pass original vertices for matching
-    );
-
-    updateRoom(selectedRoom.id, {
-      vertices: centeredVertices,
-      walls: newWalls,
-      position: newPosition
-    });
-
-    // Recalculate envelopes after adding vertex
+    // Recalculate envelopes after drag completes
     if (recalculateAllEnvelopes) {
       recalculateAllEnvelopes();
     }
-  }, [selectedRoom, updateRoom, findClosestEdgeIndex, recalculateAllEnvelopes]);
+  }, [selectedRoom, updateRoom, recalculateAllEnvelopes]);
+
 
   /**
    * Add vertex to specific edge (for programmatic use)
@@ -473,39 +384,32 @@ export function useEditMode(
       selectedRoom.scale
     );
 
-    // Insert vertex after edgeIndex
+    // Get the edge vertices
+    const v1 = selectedRoom.vertices[edgeIndex];
+    const v2 = selectedRoom.vertices[(edgeIndex + 1) % selectedRoom.vertices.length];
+
+    // Project the point onto the edge to get the exact position on the line
+    const { closestPoint: projectedPoint } = distanceToSegment(localPoint, v1, v2);
+
+    // Insert vertex after edgeIndex using the projected point
     const newVertices = [...selectedRoom.vertices];
-    newVertices.splice(edgeIndex + 1, 0, localPoint);
+    newVertices.splice(edgeIndex + 1, 0, projectedPoint);
 
-    // Recenter vertices to maintain rotation around centroid
-    const { centeredVertices, localOffset } = recenterVertices(newVertices);
-
-    // Transform local offset to world space
-    const cos = Math.cos(selectedRoom.rotation);
-    const sin = Math.sin(selectedRoom.rotation);
-    const worldOffset = {
-      x: localOffset.x * cos - localOffset.y * sin,
-      y: localOffset.x * sin + localOffset.y * cos
-    };
-
-    // Update position to account for recentering
-    const newPosition = {
-      x: selectedRoom.position.x + worldOffset.x,
-      y: selectedRoom.position.y + worldOffset.y
-    };
+    // Don't recenter - just add the vertex to the existing shape
+    // Recentering causes unwanted displacement when adding vertices
 
     // Regenerate walls (preserve existing wall properties by matching vertex positions)
     const newWalls = generateWalls(
-      centeredVertices,
+      newVertices,
       selectedRoom.wallThickness,
       selectedRoom.walls,
       selectedRoom.vertices // Pass original vertices for matching
     );
 
     updateRoom(selectedRoom.id, {
-      vertices: centeredVertices,
-      walls: newWalls,
-      position: newPosition
+      vertices: newVertices,
+      originalVertices: newVertices.map(v => ({ ...v })), // Update original vertices on manual edit
+      walls: newWalls
     });
 
     // Recalculate envelopes after adding vertex
@@ -640,10 +544,8 @@ export function useEditMode(
       position: newPosition
     });
 
-    // Recalculate envelopes immediately after wall update
-    if (recalculateAllEnvelopes) {
-      recalculateAllEnvelopes();
-    }
+    // DON'T recalculate envelopes during drag - causes race conditions
+    // Envelope will be recalculated when drag ends in endWallDrag()
   }, [selectedRoom, dragState, gridSnapEnabled, gridSize, updateRoom, recalculateAllEnvelopes]);
 
   /**
@@ -657,7 +559,19 @@ export function useEditMode(
       originalVertices: undefined
     });
     dragStartRef.current = null;
-  }, []);
+
+    // Update originalVertices after manual drag completes
+    if (selectedRoom) {
+      updateRoom(selectedRoom.id, {
+        originalVertices: selectedRoom.vertices.map(v => ({ ...v }))
+      });
+    }
+
+    // Recalculate envelopes after drag completes
+    if (recalculateAllEnvelopes) {
+      recalculateAllEnvelopes();
+    }
+  }, [selectedRoom, updateRoom, recalculateAllEnvelopes]);
 
   /**
    * Delete vertex
@@ -697,6 +611,7 @@ export function useEditMode(
 
     updateRoom(selectedRoom.id, {
       vertices: centeredVertices,
+      originalVertices: centeredVertices.map(v => ({ ...v })), // Update original vertices on manual edit
       walls: newWalls,
       position: newPosition
     });
@@ -719,7 +634,6 @@ export function useEditMode(
     updateWallDrag,
     endWallDrag,
     addVertexToEdge,
-    addVertexToClosestEdge,
     deleteVertex
   };
 }

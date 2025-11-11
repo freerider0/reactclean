@@ -98,14 +98,28 @@ export function hitTestRoomWalls(
   worldPoint: Vertex,
   room: Room
 ): number {
-  const n = room.vertices.length;
+  // Determine which vertex array the walls reference
+  // Walls generated from envelope reference envelopeVertices
+  // Fallback to centerlineVertices or vertices for older data
+  const vertexArray = room.envelopeVertices && room.envelopeVertices.length > 0
+    ? room.envelopeVertices
+    : (room.centerlineVertices && room.centerlineVertices.length > 0
+        ? room.centerlineVertices
+        : room.vertices);
+  const n = vertexArray.length;
 
   for (let wallIndex = 0; wallIndex < room.walls.length; wallIndex++) {
     const wall = room.walls[wallIndex];
 
+    // Skip if wall index is invalid for the vertex array
+    if (wall.vertexIndex >= n) {
+      console.warn(`Wall ${wallIndex} has invalid vertexIndex ${wall.vertexIndex} (max ${n-1})`);
+      continue;
+    }
+
     // Get the two vertices for this wall
-    const v1Local = room.vertices[wall.vertexIndex];
-    const v2Local = room.vertices[(wall.vertexIndex + 1) % n];
+    const v1Local = vertexArray[wall.vertexIndex];
+    const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
 
     // Transform to world coordinates
     const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
@@ -144,6 +158,52 @@ export function hitTestRoomWalls(
     // Create a polygon from the four corners
     const wallPolygon = [innerStart, innerEnd, outerEnd, outerStart];
     if (pointInPolygon(worldPoint, wallPolygon)) {
+      return wallIndex;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Hit test external walls (envelope-generated walls)
+ * Returns the wall index if hit, or -1 if no hit
+ */
+export function hitTestExternalWalls(
+  worldPoint: Vertex,
+  room: Room
+): number {
+  if (!room.envelopeVertices || !room.debugContractedEnvelope) return -1;
+  if (room.envelopeVertices.length !== room.debugContractedEnvelope.length) return -1;
+  if (!room.walls || room.walls.length === 0) return -1;
+
+  // Transform both envelopes to world coordinates
+  const outerWorld = room.envelopeVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+  const innerWorld = room.debugContractedEnvelope.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  const n = outerWorld.length;
+
+  // Test each wall quadrilateral
+  for (let i = 0; i < n; i++) {
+    // Find the wall for this edge
+    const wallIndex = room.walls.findIndex(w => w.vertexIndex === i);
+    if (wallIndex === -1) continue;
+
+    const wall = room.walls[wallIndex];
+
+    // Get quadrilateral vertices
+    const innerStart = innerWorld[i];
+    const innerEnd = innerWorld[(i + 1) % n];
+    const outerEnd = outerWorld[(i + 1) % n];
+    const outerStart = outerWorld[i];
+
+    // Test if point is inside quadrilateral
+    const quad = [innerStart, innerEnd, outerEnd, outerStart];
+    if (pointInPolygon(worldPoint, quad)) {
       return wallIndex;
     }
   }

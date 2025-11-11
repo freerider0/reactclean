@@ -16,7 +16,8 @@ const MIN_VERTICES = 3;
 export function useDrawing(
   gridConfig: GridConfig,
   zoom: number,
-  onRoomCreated: (room: Omit<Room, 'id'>) => void
+  onRoomCreated: (room: Omit<Room, 'id'>) => void,
+  existingRooms: Room[] = []
 ) {
   const [drawingState, setDrawingState] = useState<DrawingState>({
     isDrawing: false,
@@ -70,6 +71,7 @@ export function useDrawing(
     const newRoom: Omit<Room, 'id'> = {
       name: `Room ${Date.now()}`,
       vertices: centeredVertices,
+      originalVertices: [...centeredVertices], // Store original vertices for merge reset
       centerlineVertices,
       walls,
       position: centroid, // Position is the centroid
@@ -96,9 +98,17 @@ export function useDrawing(
    * Start drawing
    */
   const startDrawing = useCallback((worldPos: Vertex) => {
-    const snapResult = gridConfig.snapEnabled
-      ? snapToGrid(worldPos, gridConfig.size)
-      : { snapped: false, position: worldPos };
+    // Try to snap to existing vertices/edges first, then grid
+    const snapResult = snapWithPriority(
+      worldPos,
+      null, // No last vertex yet
+      [],   // No vertices yet
+      gridConfig.size,
+      zoom,
+      false, // No orthogonal snap for first vertex
+      gridConfig.snapEnabled,
+      existingRooms
+    );
 
     const firstVertex = snapResult.position || worldPos;
 
@@ -109,7 +119,7 @@ export function useDrawing(
       snapPosition: firstVertex,
       activeGuideLine: null
     });
-  }, [gridConfig]);
+  }, [gridConfig, zoom, existingRooms]);
 
   /**
    * Add vertex to drawing
@@ -158,8 +168,9 @@ export function useDrawing(
       drawingState.vertices,
       gridConfig.size,
       zoom,
-      true, // orthogonalEnabled
-      gridConfig.snapEnabled
+      gridConfig.orthogonalSnapEnabled ?? false, // orthogonalEnabled
+      gridConfig.snapEnabled,
+      existingRooms
     );
 
     setDrawingState(prev => ({
@@ -168,7 +179,7 @@ export function useDrawing(
       snapPosition: snapResult.position || worldPos,
       activeGuideLine: snapResult.guideLine || null
     }));
-  }, [drawingState, gridConfig, zoom]);
+  }, [drawingState, gridConfig, zoom, existingRooms]);
 
   /**
    * Cancel drawing

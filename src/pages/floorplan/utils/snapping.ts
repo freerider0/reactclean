@@ -178,7 +178,7 @@ export function snapOrthogonal(
 }
 
 /**
- * Snap to nearest vertex in rooms
+ * Snap to nearest centerline vertex in rooms (pink line)
  */
 export function snapToVertex(
   point: Vertex,
@@ -191,8 +191,11 @@ export function snapToVertex(
   for (const room of rooms) {
     if (room.id === excludeRoomId) continue;
 
-    // Transform vertices to world coordinates
-    for (const localVertex of room.vertices) {
+    // Use centerlineVertices (pink line) instead of vertices
+    const verticesArray = room.centerlineVertices || room.vertices;
+
+    // Transform centerline vertices to world coordinates
+    for (const localVertex of verticesArray) {
       const worldVertex = localToWorldSimple(localVertex, room);
       const dist = distance(point, worldVertex);
 
@@ -218,7 +221,7 @@ export function snapToVertex(
 }
 
 /**
- * Snap to nearest edge in rooms
+ * Snap to nearest centerline edge in rooms (pink line)
  */
 export function snapToEdge(
   point: Vertex,
@@ -231,8 +234,11 @@ export function snapToEdge(
   for (const room of rooms) {
     if (room.id === excludeRoomId) continue;
 
-    // Transform vertices to world coordinates
-    const worldVertices = room.vertices.map(v => localToWorldSimple(v, room));
+    // Use centerlineVertices (pink line) instead of vertices
+    const verticesArray = room.centerlineVertices || room.vertices;
+
+    // Transform centerline vertices to world coordinates
+    const worldVertices = verticesArray.map(v => localToWorldSimple(v, room));
 
     for (let i = 0; i < worldVertices.length; i++) {
       const v1 = worldVertices[i];
@@ -262,7 +268,7 @@ export function snapToEdge(
 }
 
 /**
- * Combined snap with priority: orthogonal > grid
+ * Combined snap with priority: vertex > edge > orthogonal > grid
  */
 export function snapWithPriority(
   point: Vertex,
@@ -271,9 +277,26 @@ export function snapWithPriority(
   gridSize: number,
   zoom: number,
   orthogonalEnabled: boolean,
-  gridEnabled: boolean
+  gridEnabled: boolean,
+  existingRooms?: Room[]
 ): SnapResult {
-  // Priority 1: Orthogonal snap
+  // Priority 1: Snap to existing room vertices
+  if (existingRooms && existingRooms.length > 0) {
+    const vertexSnap = snapToVertex(point, existingRooms);
+    if (vertexSnap.snapped) {
+      return vertexSnap;
+    }
+  }
+
+  // Priority 2: Snap to existing room edges
+  if (existingRooms && existingRooms.length > 0) {
+    const edgeSnap = snapToEdge(point, existingRooms);
+    if (edgeSnap.snapped) {
+      return edgeSnap;
+    }
+  }
+
+  // Priority 3: Orthogonal snap
   if (orthogonalEnabled && lastVertex) {
     const orthogonalSnap = snapOrthogonal(point, lastVertex, allVertices, zoom);
     if (orthogonalSnap.snapped) {
@@ -281,7 +304,7 @@ export function snapWithPriority(
     }
   }
 
-  // Priority 2: Grid snap
+  // Priority 4: Grid snap
   if (gridEnabled) {
     return snapToGrid(point, gridSize);
   }

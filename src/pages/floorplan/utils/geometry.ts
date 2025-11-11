@@ -2,8 +2,10 @@
  * Basic geometry utility functions
  */
 
-import { Vertex, Room } from '../types';
-import { getWallQuad } from './walls';
+import { Vertex, Room, Wall } from '../types';
+import { getWallQuad, generateWallsFromEnvelope } from './walls';
+import { findLineSegmentOverlap, splitEdgeAtOverlaps, insertSplitPoints } from './edgeSplitting';
+import { localToWorld, worldToLocal } from './coordinates';
 import {
   loadNativeClipperLibInstanceAsync,
   NativeClipperLibInstance,
@@ -436,10 +438,107 @@ function removeCollinearVertices(vertices: Vertex[], tolerance: number = 0.01): 
 }
 
 /**
+ * Offset a polygon outward using simple geometric approach (like calculateCenterline)
+ * Offsets each edge by the given distance and finds intersections for mitered corners
+ */
+function offsetPolygonSimple(vertices: Vertex[], offsetDistance: number): Vertex[] {
+  const n = vertices.length;
+
+  if (n < 3) return vertices;
+
+  // Create offset lines for each edge
+  const offsetLines: { start: Vertex; end: Vertex }[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const p1 = vertices[i];
+    const p2 = vertices[(i + 1) % n];
+
+    // Edge vector
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+
+    if (length === 0) continue;
+
+    // Normalize
+    const dirX = dx / length;
+    const dirY = dy / length;
+
+    // Perpendicular outward (for CCW polygon, right-hand normal)
+    const normalX = dirY;
+    const normalY = -dirX;
+
+    // Offset line
+    offsetLines.push({
+      start: {
+        x: p1.x + normalX * offsetDistance,
+        y: p1.y + normalY * offsetDistance
+      },
+      end: {
+        x: p2.x + normalX * offsetDistance,
+        y: p2.y + normalY * offsetDistance
+      }
+    });
+  }
+
+  // Find intersections of adjacent offset lines
+  const offsetVertices: Vertex[] = [];
+  for (let i = 0; i < offsetLines.length; i++) {
+    const line1 = offsetLines[i];
+    const line2 = offsetLines[(i + 1) % offsetLines.length];
+
+    // Find intersection
+    const intersection = lineIntersection(line1, line2);
+    if (intersection) {
+      offsetVertices.push(intersection);
+    } else {
+      // Fallback: use average of endpoints
+      offsetVertices.push({
+        x: (line1.end.x + line2.start.x) / 2,
+        y: (line1.end.y + line2.start.y) / 2
+      });
+    }
+  }
+
+  return offsetVertices;
+}
+
+/**
+ * Helper function to find intersection of two lines
+ */
+function lineIntersection(
+  line1: { start: Vertex; end: Vertex },
+  line2: { start: Vertex; end: Vertex }
+): Vertex | null {
+  const x1 = line1.start.x;
+  const y1 = line1.start.y;
+  const x2 = line1.end.x;
+  const y2 = line1.end.y;
+  const x3 = line2.start.x;
+  const y3 = line2.start.y;
+  const x4 = line2.end.x;
+  const y4 = line2.end.y;
+
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+
+  if (Math.abs(denom) < 1e-10) {
+    return null; // Parallel lines
+  }
+
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+
+  return {
+    x: x1 + t * (x2 - x1),
+    y: y1 + t * (y2 - y1)
+  };
+}
+
+/**
  * Offset a polygon outward using Clipper with sharp mitered corners
  * Uses WebAssembly for production-ready performance
+ * DEPRECATED: Use offsetPolygonSimple for simple cases
  */
-async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number): Promise<Vertex[]> {
+async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number, miterLimit: number = 2.0): Promise<Vertex[]> {
   if (vertices.length < 3) return vertices;
 
   const clipper = await getClipperInstance();
@@ -450,7 +549,9 @@ async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number):
   // Scale offset distance to integer (offset is in same units as coordinates)
   const scaledOffset = offsetDistance * COORD_SCALE;
 
-  // Perform offset with JoinType.Miter for sharp corners
+  // Perform offset with JoinType.Miter and configurable limit
+  // Low miterLimit (e.g., 2.0) prevents spikes at shallow angles by beveling
+  // High miterLimit (e.g., 10.0) allows sharp miters but can create spikes
   const offsetPaths = clipper.offsetToPaths({
     delta: scaledOffset,
     offsetInputs: [{
@@ -458,7 +559,7 @@ async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number):
       joinType: JoinType.Miter,
       endType: EndType.ClosedPolygon
     }],
-    miterLimit: 2.0 // Default miter limit
+    miterLimit: miterLimit // Configurable miter limit
   });
 
   // Take the first result polygon
@@ -467,18 +568,212 @@ async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number):
   }
 
   // Convert back to Vertex[]
-  return pathToVertices(offsetPaths[0]);
+  const result = pathToVertices(offsetPaths[0]);
+
+  // Detect bevel pairings (don't remove, just identify relationships)
+  const pairings = detectBevelPairings(result);
+  console.log(`📋 Bevel pairings:`, pairings);
+
+  return result;
+}
+
+/**
+ * Detect bevel vertex groups using collinearity check (Method 3 only)
+ * Returns array where each index maps to its logical corner group ID
+ * Vertices that are collinear belong to the same corner (bevel pair)
+ */
+function detectBevelPairings(vertices: Vertex[]): number[] {
+  if (vertices.length < 3) return vertices.map((_, i) => i);
+
+  const n = vertices.length;
+  const groupIds = new Array(n).fill(-1);
+  let currentGroupId = 0;
+
+  console.log(`🔍 Detecting bevel pairings for ${n} vertices`);
+
+  for (let i = 0; i < n; i++) {
+    if (groupIds[i] !== -1) continue; // Already assigned
+
+    const prev = vertices[(i - 1 + n) % n];
+    const curr = vertices[i];
+    const next = vertices[(i + 1) % n];
+
+    // Method 3: Collinearity check only
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+
+    const crossProduct = Math.abs(v1x * v2y - v1y * v2x);
+    const normalizedCross = crossProduct / (len1 * len2 + 0.0001);
+    const isCollinear = normalizedCross < 0.02; // Very small cross product
+
+    if (isCollinear) {
+      // This vertex is part of a bevel - pair it with next vertex
+      groupIds[i] = currentGroupId;
+      groupIds[(i + 1) % n] = currentGroupId;
+      console.log(`  🔗 Vertices ${i} and ${(i + 1) % n} are PAIRED (bevel group ${currentGroupId})`);
+      currentGroupId++;
+    } else {
+      // Hard edge vertex - gets its own group
+      groupIds[i] = currentGroupId;
+      console.log(`  ✅ Vertex ${i} is HARD EDGE (group ${currentGroupId})`);
+      currentGroupId++;
+    }
+  }
+
+  return groupIds;
+}
+
+/**
+ * Insert collinear vertices from a polygon (e.g., green debug polygon) into a room's vertices array
+ * Checks if any polygon vertices lie on room edges but are not coincident with existing vertices
+ * Returns updated vertices array if changes were made, or null if no changes
+ */
+function insertCollinearVerticesFromPolygon(
+  room: Room,
+  polygonWorld: Vertex[],
+  tolerance: number = 0.1 * COORD_SCALE, // 0.1cm for collinearity check
+  coincidenceTolerance: number = 0.3 * COORD_SCALE // 0.3cm to avoid existing vertices (reduced from 1.0cm)
+): Vertex[] | null {
+  if (!polygonWorld || polygonWorld.length === 0) return null;
+
+  console.log(`🔍 Checking room ${room.id} for collinear vertex insertion`);
+  console.log(`   Green polygon: ${polygonWorld.length} vertices`);
+
+  // Reset to original vertices before checking (remove previously auto-inserted vertices)
+  // Use originalVertices if available, otherwise use current vertices
+  const baseVertices = room.originalVertices && room.originalVertices.length > 0
+    ? room.originalVertices
+    : room.vertices;
+
+  console.log(`   Room vertices: ${baseVertices.length} (using ${room.originalVertices ? 'original' : 'current'})`);
+
+  // Transform base vertices to world coordinates
+  const verticesWorld = baseVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  // Track vertices to insert: { edgeIndex, vertex in local coords, t parameter }
+  const insertions: Array<{ edgeIndex: number; vertex: Vertex; t: number }> = [];
+
+  // Track statistics for debugging
+  let skippedNotCollinear = 0;
+  let skippedNearEndpoint = 0;
+  let skippedTooClose = 0;
+  let skippedDegenerateEdge = 0;
+
+  // For each vertex in the polygon
+  for (const polyVertex of polygonWorld) {
+    // Check each edge of the room
+    for (let i = 0; i < verticesWorld.length; i++) {
+      const v1 = verticesWorld[i];
+      const v2 = verticesWorld[(i + 1) % verticesWorld.length];
+
+      // Check if polygon vertex is on this edge
+      const { distance: dist, closestPoint } = distanceToSegment(polyVertex, v1, v2);
+
+      // Check if it's close enough to the edge (collinear)
+      if (dist > tolerance) {
+        skippedNotCollinear++;
+        continue;
+      }
+
+      // Calculate parametric position along edge (0 = v1, 1 = v2)
+      const dx = v2.x - v1.x;
+      const dy = v2.y - v1.y;
+      const lengthSquared = dx * dx + dy * dy;
+
+      if (lengthSquared === 0) {
+        skippedDegenerateEdge++;
+        continue; // Degenerate edge
+      }
+
+      let t = ((closestPoint.x - v1.x) * dx + (closestPoint.y - v1.y) * dy) / lengthSquared;
+      t = Math.max(0, Math.min(1, t)); // Clamp to [0, 1]
+
+      // Skip if too close to endpoints (avoid duplicates)
+      if (t < 0.01 || t > 0.99) {
+        skippedNearEndpoint++;
+        continue;
+      }
+
+      // Check if NOT coincident with any existing vertex
+      let tooCloseToExisting = false;
+      for (const existingVertex of verticesWorld) {
+        const distToExisting = distance(polyVertex, existingVertex);
+        if (distToExisting < coincidenceTolerance) {
+          tooCloseToExisting = true;
+          break;
+        }
+      }
+
+      if (tooCloseToExisting) {
+        skippedTooClose++;
+        continue;
+      }
+
+      // Convert to local coordinates for insertion
+      const vertexLocal = worldToLocal(polyVertex, room.position, room.rotation, room.scale);
+
+      // Mark for insertion
+      insertions.push({ edgeIndex: i, vertex: vertexLocal, t });
+    }
+  }
+
+  // Log statistics
+  console.log(`   Results: ${insertions.length} vertices to insert`);
+  if (insertions.length === 0) {
+    console.log(`   Skipped: ${skippedNotCollinear} not collinear, ${skippedNearEndpoint} near endpoint, ${skippedTooClose} too close to existing, ${skippedDegenerateEdge} degenerate edge`);
+  }
+
+  // If no insertions, return null
+  if (insertions.length === 0) return null;
+
+  // Sort insertions by edge index, then by t parameter
+  insertions.sort((a, b) => {
+    if (a.edgeIndex !== b.edgeIndex) return a.edgeIndex - b.edgeIndex;
+    return a.t - b.t;
+  });
+
+  // Build new vertices array with insertions (starting from base vertices)
+  const newVertices: Vertex[] = [];
+  let currentEdge = 0;
+  let insertionIndex = 0;
+
+  for (let i = 0; i < baseVertices.length; i++) {
+    // Add the current vertex from base (original) vertices
+    newVertices.push(baseVertices[i]);
+
+    // Insert all vertices that belong after this edge
+    while (insertionIndex < insertions.length && insertions[insertionIndex].edgeIndex === i) {
+      newVertices.push(insertions[insertionIndex].vertex);
+      insertionIndex++;
+    }
+  }
+
+  console.log(`✨ ${room.id}: Inserted ${insertions.length} collinear vertices (checked ${polygonWorld.length} green polygon vertices against ${baseVertices.length} room edges)`);
+  if (room.vertices.length !== baseVertices.length) {
+    console.log(`   ↳ Reset from ${room.vertices.length} to ${baseVertices.length} base vertices first`);
+  }
+  return newVertices;
 }
 
 /**
  * Calculate envelope polygons for all rooms using Clipper (WebAssembly)
  * Connected rooms will merge into one envelope, disconnected rooms get separate envelopes
- * Returns a Map of room ID to their envelope vertices (in local coordinates)
+ * Returns a Map of room ID to their envelope vertices (in local coordinates) AND walls generated from envelope
  */
 export async function calculateFloorplanEnvelopes(
-  rooms: Room[]
-): Promise<Map<string, { envelope: Vertex[]; debugCenterline: Vertex[] }>> {
-  const envelopeMap = new Map<string, { envelope: Vertex[]; debugCenterline: Vertex[] }>();
+  rooms: Room[],
+  miterLimit: number = 2.0,
+  interiorWallThickness: number = 15,
+  exteriorWallThickness: number = 30
+): Promise<Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; walls: Wall[]; updatedVertices?: Vertex[] }>> {
+  const envelopeMap = new Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; walls: Wall[]; updatedVertices?: Vertex[] }>();
 
   if (rooms.length === 0) {
     return envelopeMap;
@@ -581,7 +876,7 @@ export async function calculateFloorplanEnvelopes(
       joinType: JoinType.Miter,
       endType: EndType.ClosedPolygon
     }],
-    miterLimit: 2.0
+    miterLimit: 1000.0 // Very high = sharp corners only
   });
 
   console.log(`Step 2: Union of ${expandedPaths.length} expanded paths`);
@@ -604,7 +899,7 @@ export async function calculateFloorplanEnvelopes(
       joinType: JoinType.Miter,
       endType: EndType.ClosedPolygon
     }],
-    miterLimit: 2.0
+    miterLimit: 1000.0 // Very high = sharp corners only
   });
 
   console.log(`Final result: ${mergedPaths.length} merged polygon(s)`);
@@ -621,21 +916,41 @@ export async function calculateFloorplanEnvelopes(
     // Convert path back to Vertex[] format (world coordinates)
     const mergedCenterlineWorld = pathToVertices(path);
 
-    // Inflate the envelope outward by half wall thickness (15cm default)
-    // This offsets from centerline to outer edge
-    const inflationDistance = 15; // cm - half of typical 30cm exterior wall
-    const envelopeVerticesWorld = await offsetPolygonOutward(mergedCenterlineWorld, inflationDistance);
+    // Calculate offsets from merged centerline
+    // Merged centerline is at halfThickness from floor (assuming rooms use interior wall thickness)
+    const halfThickness = interiorWallThickness / 2;
+
+    // Yellow line: floor + interiorWallThickness
+    // From centerline: interiorWallThickness - halfThickness
+    const yellowLineOffset = interiorWallThickness - halfThickness;
+    const innerBoundaryWorld = offsetPolygonSimple(mergedCenterlineWorld, yellowLineOffset);
+
+    // Outer envelope: floor + exteriorWallThickness
+    // From centerline: exteriorWallThickness - halfThickness
+    const outerOffset = exteriorWallThickness - halfThickness;
+    const envelopeVerticesWorld = offsetPolygonSimple(mergedCenterlineWorld, outerOffset);
+
+    // DEBUG: Contract the merged centerline by 7.5cm (for visualization) using simple geometric offset
+    // This shows the inner boundary for interior walls (centerline - 7.5cm)
+    const contractedEnvelopeWorld = offsetPolygonSimple(mergedCenterlineWorld, -7.5);
 
     // Find which rooms belong to this envelope
     // A room belongs to an envelope if its centroid is inside the envelope
+    const roomsInThisEnvelope: string[] = [];
     for (const room of rooms) {
       // Get room centroid in world coordinates
       const roomCentroidLocal = polygonCentroid(room.vertices);
       const roomCentroidWorld = localToWorld(roomCentroidLocal, room.position, room.rotation, room.scale);
 
       if (pointInPolygon(roomCentroidWorld, envelopeVerticesWorld)) {
+        roomsInThisEnvelope.push(room.id);
         // Convert envelope from world to local coordinates for this room
         const envelopeVerticesLocal = envelopeVerticesWorld.map(v =>
+          worldToLocal(v, room.position, room.rotation, room.scale)
+        );
+
+        // Convert inner boundary (yellow line) from world to local coordinates
+        const innerBoundaryLocal = innerBoundaryWorld.map(v =>
           worldToLocal(v, room.position, room.rotation, room.scale)
         );
 
@@ -644,11 +959,29 @@ export async function calculateFloorplanEnvelopes(
           worldToLocal(v, room.position, room.rotation, room.scale)
         );
 
+        // Convert contracted envelope from world to local coordinates
+        const debugContractedLocal = contractedEnvelopeWorld.map(v =>
+          worldToLocal(v, room.position, room.rotation, room.scale)
+        );
+
+        // Check if any vertices from the green polygon should be inserted into room vertices
+        const updatedVertices = insertCollinearVerticesFromPolygon(room, contractedEnvelopeWorld);
+
+        // Don't generate envelope walls - just store the polygons
         envelopeMap.set(room.id, {
           envelope: envelopeVerticesLocal,
-          debugCenterline: debugCenterlineLocal
+          innerBoundary: innerBoundaryLocal,
+          debugCenterline: debugCenterlineLocal,
+          debugContracted: debugContractedLocal,
+          walls: room.walls, // Keep original room walls unchanged
+          updatedVertices: updatedVertices || undefined // Include updated vertices if any
         });
       }
+    }
+
+    // Log which rooms were checked against this shared green polygon
+    if (roomsInThisEnvelope.length > 1) {
+      console.log(`🔗 Merged envelope checked ${roomsInThisEnvelope.length} rooms: ${roomsInThisEnvelope.join(', ')}`);
     }
   }
 
@@ -658,13 +991,36 @@ export async function calculateFloorplanEnvelopes(
       // Remove collinear vertices before processing
       const cleanedCenterline = removeCollinearVertices(room.centerlineVertices);
 
-      // Inflate the room's centerline vertices to get outer edge
-      const inflationDistance = 15; // cm - half of typical 30cm exterior wall
-      const inflatedEnvelope = await offsetPolygonOutward(cleanedCenterline, inflationDistance);
+      // Calculate offsets from centerline
+      // Centerline is at halfThickness from floor
+      const halfThickness = room.wallThickness / 2;
 
+      // Yellow line: floor + interiorWallThickness
+      // From centerline: interiorWallThickness - halfThickness
+      const yellowLineOffset = interiorWallThickness - halfThickness;
+      const innerBoundary = offsetPolygonSimple(cleanedCenterline, yellowLineOffset);
+
+      // Outer envelope: floor + exteriorWallThickness
+      // From centerline: exteriorWallThickness - halfThickness
+      const outerOffset = exteriorWallThickness - halfThickness;
+      const inflatedEnvelope = offsetPolygonSimple(cleanedCenterline, outerOffset);
+
+      // DEBUG: Contract the centerline by 7.5cm (for visualization) using simple geometric offset
+      const contractedEnvelope = offsetPolygonSimple(cleanedCenterline, -7.5);
+
+      // NOTE: Do NOT call insertCollinearVerticesFromPolygon() here!
+      // Fallback path means the room is NOT merging with anything.
+      // A room's own green polygon checking against its own edges doesn't make sense.
+      // updatedVertices should remain undefined so the reset logic in useFloorplan.ts triggers.
+
+      // Don't generate envelope walls - just store the polygons
       envelopeMap.set(room.id, {
         envelope: inflatedEnvelope,
-        debugCenterline: cleanedCenterline
+        innerBoundary: innerBoundary,
+        debugCenterline: cleanedCenterline,
+        debugContracted: contractedEnvelope,
+        walls: room.walls // Keep original room walls unchanged
+        // updatedVertices is intentionally omitted - no vertex insertion for separated rooms
       });
     }
   }

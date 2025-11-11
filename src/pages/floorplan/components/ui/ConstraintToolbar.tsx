@@ -10,7 +10,7 @@ import { UseConstraintsResult } from '../../hooks/useConstraints';
 export interface ConstraintToolbarProps {
   room: Room | null;
   constraints: UseConstraintsResult;
-  selectedWalls: number[];  // Currently selected walls (for adding constraints)
+  selectedWalls: number[];  // Currently selected edge indices (for adding constraints)
   wallPropertiesPanelOpen?: boolean;  // True if WallPropertiesPanel is showing (to offset position)
 }
 
@@ -30,65 +30,70 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   const topPosition = wallPropertiesPanelOpen ? 'top-[32rem]' : 'top-20';
 
   // Check what constraints can be added based on selection
-  const canAddSingleWallConstraint = selectedWalls.length === 1;
-  const canAddTwoWallConstraint = selectedWalls.length === 2;
+  const canAddSingleEdgeConstraint = selectedWalls.length === 1;
+  const canAddTwoEdgeConstraint = selectedWalls.length === 2;
 
-  // Helper function to get vertex indices from wall index
-  const getWallVertices = (wallIndex: number): [number, number] => {
-    const startVertex = wallIndex;
-    const endVertex = (wallIndex + 1) % room.vertices.length;
-    return [startVertex, endVertex];
+  // Helper function to get vertex indices from edge index
+  // Edge index i corresponds to the edge from vertex[i] to vertex[i+1]
+  const getEdgeVertices = (edgeIndex: number): [number, number] => {
+    return [edgeIndex, (edgeIndex + 1) % room.vertices.length];
   };
 
   /**
-   * Handle adding a distance constraint (locks the wall length)
+   * Handle adding a distance constraint (locks the edge length)
    */
   const handleAddDistance = () => {
-    if (!canAddSingleWallConstraint) return;
-    const [v1, v2] = getWallVertices(selectedWalls[0]);
+    if (!canAddSingleEdgeConstraint) return;
+    const [v1, v2] = getEdgeVertices(selectedWalls[0]);
     constraints.addDistanceConstraint(room.id, v1, v2);
   };
 
   /**
-   * Handle adding a horizontal constraint (makes wall horizontal)
+   * Handle adding a horizontal constraint (makes edge horizontal)
    */
   const handleAddHorizontal = () => {
-    if (!canAddSingleWallConstraint) return;
-    const [v1, v2] = getWallVertices(selectedWalls[0]);
+    if (!canAddSingleEdgeConstraint) return;
+    const [v1, v2] = getEdgeVertices(selectedWalls[0]);
     constraints.addHorizontalConstraint(room.id, v1, v2);
   };
 
   /**
-   * Handle adding a vertical constraint (makes wall vertical)
+   * Handle adding a vertical constraint (makes edge vertical)
    */
   const handleAddVertical = () => {
-    if (!canAddSingleWallConstraint) return;
-    const [v1, v2] = getWallVertices(selectedWalls[0]);
+    if (!canAddSingleEdgeConstraint) return;
+    const [v1, v2] = getEdgeVertices(selectedWalls[0]);
     constraints.addVerticalConstraint(room.id, v1, v2);
   };
 
   /**
-   * Handle adding a parallel constraint (makes two walls parallel)
+   * Handle adding a parallel constraint (makes two edges parallel)
    */
   const handleAddParallel = () => {
-    if (!canAddTwoWallConstraint) return;
-    constraints.addParallelConstraint(room.id, selectedWalls[0], selectedWalls[1]);
+    if (!canAddTwoEdgeConstraint) return;
+    const [edge1] = getEdgeVertices(selectedWalls[0]);
+    const [edge2] = getEdgeVertices(selectedWalls[1]);
+    constraints.addParallelConstraint(room.id, edge1, edge2);
   };
 
   /**
-   * Handle adding a perpendicular constraint (makes two walls perpendicular)
+   * Handle adding a perpendicular constraint (makes two edges perpendicular)
    */
   const handleAddPerpendicular = () => {
-    if (!canAddTwoWallConstraint) return;
-    constraints.addPerpendicularConstraint(room.id, selectedWalls[0], selectedWalls[1]);
+    if (!canAddTwoEdgeConstraint) return;
+    const [edge1] = getEdgeVertices(selectedWalls[0]);
+    const [edge2] = getEdgeVertices(selectedWalls[1]);
+    constraints.addPerpendicularConstraint(room.id, edge1, edge2);
   };
 
   /**
-   * Handle adding an equal length constraint (makes two walls equal length)
+   * Handle adding an equal length constraint (makes two edges equal length)
    */
   const handleAddEqualLength = () => {
-    if (!canAddTwoWallConstraint) return;
-    constraints.addEqualLengthConstraint(room.id, selectedWalls[0], selectedWalls[1]);
+    if (!canAddTwoEdgeConstraint) return;
+    const [edge1] = getEdgeVertices(selectedWalls[0]);
+    const [edge2] = getEdgeVertices(selectedWalls[1]);
+    constraints.addEqualLengthConstraint(room.id, edge1, edge2);
   };
 
   /**
@@ -166,86 +171,86 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-2">Add Constraint</h3>
 
-            {/* Single Wall Constraints */}
+            {/* Single Edge Constraints */}
             <div className="mb-3">
-              <p className="text-xs text-gray-500 mb-1">Wall Constraints (select 1 wall)</p>
+              <p className="text-xs text-gray-500 mb-1">Edge Constraints (select 1 edge)</p>
               <div className="grid grid-cols-3 gap-1">
                 <button
                   onClick={handleAddDistance}
-                  disabled={!canAddSingleWallConstraint}
+                  disabled={!canAddSingleEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddSingleWallConstraint
+                    canAddSingleEdgeConstraint
                       ? 'bg-blue-500 text-white hover:bg-blue-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Lock wall length"
+                  title="Lock edge length"
                 >
                   Distance
                 </button>
                 <button
                   onClick={handleAddHorizontal}
-                  disabled={!canAddSingleWallConstraint}
+                  disabled={!canAddSingleEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddSingleWallConstraint
+                    canAddSingleEdgeConstraint
                       ? 'bg-blue-500 text-white hover:bg-blue-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Make wall horizontal"
+                  title="Make edge horizontal"
                 >
                   Horizontal
                 </button>
                 <button
                   onClick={handleAddVertical}
-                  disabled={!canAddSingleWallConstraint}
+                  disabled={!canAddSingleEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddSingleWallConstraint
+                    canAddSingleEdgeConstraint
                       ? 'bg-blue-500 text-white hover:bg-blue-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Make wall vertical"
+                  title="Make edge vertical"
                 >
                   Vertical
                 </button>
               </div>
             </div>
 
-            {/* Two Wall Constraints */}
+            {/* Two Edge Constraints */}
             <div className="mb-3">
-              <p className="text-xs text-gray-500 mb-1">Two-Wall Constraints (select 2 walls)</p>
+              <p className="text-xs text-gray-500 mb-1">Two-Edge Constraints (select 2 edges)</p>
               <div className="grid grid-cols-3 gap-1">
                 <button
                   onClick={handleAddParallel}
-                  disabled={!canAddTwoWallConstraint}
+                  disabled={!canAddTwoEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddTwoWallConstraint
+                    canAddTwoEdgeConstraint
                       ? 'bg-purple-500 text-white hover:bg-purple-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Make two walls parallel"
+                  title="Make two edges parallel"
                 >
                   Parallel
                 </button>
                 <button
                   onClick={handleAddPerpendicular}
-                  disabled={!canAddTwoWallConstraint}
+                  disabled={!canAddTwoEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddTwoWallConstraint
+                    canAddTwoEdgeConstraint
                       ? 'bg-purple-500 text-white hover:bg-purple-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Make two walls perpendicular"
+                  title="Make two edges perpendicular"
                 >
                   Perpendicular
                 </button>
                 <button
                   onClick={handleAddEqualLength}
-                  disabled={!canAddTwoWallConstraint}
+                  disabled={!canAddTwoEdgeConstraint}
                   className={`px-2 py-1 text-xs rounded ${
-                    canAddTwoWallConstraint
+                    canAddTwoEdgeConstraint
                       ? 'bg-purple-500 text-white hover:bg-purple-600'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }`}
-                  title="Make two walls equal length"
+                  title="Make two edges equal length"
                 >
                   Equal
                 </button>
@@ -253,9 +258,9 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
             </div>
 
             {/* Selection hint */}
-            {!canAddSingleWallConstraint && !canAddTwoWallConstraint && (
+            {!canAddSingleEdgeConstraint && !canAddTwoEdgeConstraint && (
               <p className="text-xs text-gray-400 italic">
-                Click on a wall to add constraints
+                Click on an edge to add constraints
               </p>
             )}
           </div>
