@@ -28,6 +28,8 @@ export const createSelectionSlice: StateCreator<
     hoverWallIndex: null,
     hoverApertureId: null,
     hoverApertureWallIndex: null,
+    diagonalConstraintMode: false,
+    diagonalVertices: [],
   },
 
   // ============================================
@@ -196,6 +198,8 @@ export const createSelectionSlice: StateCreator<
         hoverWallIndex: state.selection.hoverWallIndex,
         hoverApertureId: state.selection.hoverApertureId,
         hoverApertureWallIndex: state.selection.hoverApertureWallIndex,
+        diagonalConstraintMode: false,
+        diagonalVertices: [],
       };
     });
   },
@@ -286,5 +290,46 @@ export const createSelectionSlice: StateCreator<
     return selectedIds
       .map(id => get().rooms.get(id))
       .filter(room => room !== undefined) as Room[];
+  },
+
+  /**
+   * Start diagonal constraint mode
+   * Clears other selections and prepares for vertex selection
+   */
+  startDiagonalConstraintMode: () => {
+    set((state) => {
+      state.selection.diagonalConstraintMode = true;
+      state.selection.diagonalVertices = [];
+      // Clear other selections
+      state.selection.selectedVertexIndex = null;
+      state.selection.selectedEdgeIndex = null;
+      state.selection.selectedWallIndex = null;
+      state.selection.selectedApertureId = null;
+      state.selection.selectedApertureWallIndex = null;
+    });
+  },
+
+  /**
+   * Add a vertex to diagonal constraint selection
+   * Automatically creates constraint when 2 vertices are selected
+   */
+  addDiagonalVertex: (index) => {
+    set((state) => {
+      // Only add if not already in the array
+      if (!state.selection.diagonalVertices.includes(index)) {
+        state.selection.diagonalVertices.push(index);
+      }
+    });
+  },
+
+  /**
+   * Clear diagonal constraint mode
+   * Exits diagonal constraint mode and clears selected vertices
+   */
+  clearDiagonalConstraintMode: () => {
+    set((state) => {
+      state.selection.diagonalConstraintMode = false;
+      state.selection.diagonalVertices = [];
+    });
   },
 });

@@ -5,21 +5,45 @@
 
 import React, { useState } from 'react';
 import { Room, ConstraintType } from '../../types';
-import { UseConstraintsResult } from '../../hooks/useConstraints';
+import { useFloorplanStore } from '../../store/floorplanStore';
+import {
+  createDistanceConstraint,
+  createHorizontalConstraint,
+  createVerticalConstraint,
+  createParallelConstraint,
+  createPerpendicularConstraint,
+  createEqualLengthConstraint
+} from '../../utils/constraints';
 
 export interface ConstraintToolbarProps {
   room: Room | null;
-  constraints: UseConstraintsResult;
   selectedWalls: number[];  // Currently selected edge indices (for adding constraints)
   wallPropertiesPanelOpen?: boolean;  // True if WallPropertiesPanel is showing (to offset position)
 }
 
 export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   room,
-  constraints,
   selectedWalls,
   wallPropertiesPanelOpen = false
 }) => {
+  // Get store actions and state
+  const addConstraint = useFloorplanStore(state => state.addConstraint);
+  const removeConstraint = useFloorplanStore(state => state.removeConstraint);
+  const toggleConstraint = useFloorplanStore(state => state.toggleConstraint);
+  const solveRoomConstraints = useFloorplanStore(state => state.solveRoomConstraints);
+  const getRoomDOF = useFloorplanStore(state => state.getRoomDOF);
+  const isRoomOverConstrained = useFloorplanStore(state => state.isRoomOverConstrained);
+  const isSolving = useFloorplanStore(state => state.isSolving);
+
+  // Diagonal constraint mode state and actions
+  const diagonalConstraintMode = useFloorplanStore(state => state.selection.diagonalConstraintMode);
+  const diagonalVertices = useFloorplanStore(state => state.selection.diagonalVertices);
+  const startDiagonalConstraintMode = useFloorplanStore(state => state.startDiagonalConstraintMode);
+  const clearDiagonalConstraintMode = useFloorplanStore(state => state.clearDiagonalConstraintMode);
+
+  // Calculate DOF and over-constrained status
+  const dof = room ? getRoomDOF(room.id) : null;
+  const overConstrained = room ? isRoomOverConstrained(room.id) : false;
   const [isExpanded, setIsExpanded] = useState(true);
 
   if (!room) {
@@ -41,11 +65,18 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
 
   /**
    * Handle adding a distance constraint (locks the edge length)
+   * If no edge selected, activates diagonal constraint mode
    */
   const handleAddDistance = () => {
-    if (!canAddSingleEdgeConstraint) return;
-    const [v1, v2] = getEdgeVertices(selectedWalls[0]);
-    constraints.addDistanceConstraint(room.id, v1, v2);
+    if (canAddSingleEdgeConstraint) {
+      // Edge is selected - add constraint to that edge
+      const [v1, v2] = getEdgeVertices(selectedWalls[0]);
+      const constraint = createDistanceConstraint(room, v1, v2);
+      addConstraint(room.id, constraint, true);
+    } else {
+      // No edge selected - activate diagonal constraint mode
+      handleActivateDiagonalMode();
+    }
   };
 
   /**
@@ -54,7 +85,8 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   const handleAddHorizontal = () => {
     if (!canAddSingleEdgeConstraint) return;
     const [v1, v2] = getEdgeVertices(selectedWalls[0]);
-    constraints.addHorizontalConstraint(room.id, v1, v2);
+    const constraint = createHorizontalConstraint(v1, v2);
+    addConstraint(room.id, constraint, true);
   };
 
   /**
@@ -63,7 +95,8 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   const handleAddVertical = () => {
     if (!canAddSingleEdgeConstraint) return;
     const [v1, v2] = getEdgeVertices(selectedWalls[0]);
-    constraints.addVerticalConstraint(room.id, v1, v2);
+    const constraint = createVerticalConstraint(v1, v2);
+    addConstraint(room.id, constraint, true);
   };
 
   /**
@@ -73,7 +106,8 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
     if (!canAddTwoEdgeConstraint) return;
     const [edge1] = getEdgeVertices(selectedWalls[0]);
     const [edge2] = getEdgeVertices(selectedWalls[1]);
-    constraints.addParallelConstraint(room.id, edge1, edge2);
+    const constraint = createParallelConstraint(edge1, edge2);
+    addConstraint(room.id, constraint, true);
   };
 
   /**
@@ -83,7 +117,8 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
     if (!canAddTwoEdgeConstraint) return;
     const [edge1] = getEdgeVertices(selectedWalls[0]);
     const [edge2] = getEdgeVertices(selectedWalls[1]);
-    constraints.addPerpendicularConstraint(room.id, edge1, edge2);
+    const constraint = createPerpendicularConstraint(edge1, edge2);
+    addConstraint(room.id, constraint, true);
   };
 
   /**
@@ -93,14 +128,40 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
     if (!canAddTwoEdgeConstraint) return;
     const [edge1] = getEdgeVertices(selectedWalls[0]);
     const [edge2] = getEdgeVertices(selectedWalls[1]);
-    constraints.addEqualLengthConstraint(room.id, edge1, edge2);
+    const constraint = createEqualLengthConstraint(edge1, edge2);
+    addConstraint(room.id, constraint, true);
+  };
+
+  /**
+   * Handle activating diagonal constraint mode
+   */
+  const handleActivateDiagonalMode = () => {
+    if (diagonalConstraintMode) {
+      // Exit mode if already active
+      clearDiagonalConstraintMode();
+    } else {
+      // Enter mode
+      startDiagonalConstraintMode();
+    }
+  };
+
+  /**
+   * Calculate diagonal distance between two vertices
+   */
+  const calculateDiagonalDistance = (): number | null => {
+    if (!room || diagonalVertices.length !== 2) return null;
+    const v1 = room.vertices[diagonalVertices[0]];
+    const v2 = room.vertices[diagonalVertices[1]];
+    const dx = v2.x - v1.x;
+    const dy = v2.y - v1.y;
+    return Math.sqrt(dx * dx + dy * dy);
   };
 
   /**
    * Handle solving constraints
    */
   const handleSolve = async () => {
-    await constraints.solveConstraints(room.id);
+    await solveRoomConstraints(room.id);
   };
 
   /**
@@ -146,13 +207,13 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
         <div className="flex items-center gap-2">
           {/* DOF Indicator */}
           <div className={`text-xs px-2 py-1 rounded ${
-            constraints.overConstrained
+            overConstrained
               ? 'bg-red-500 text-white'
-              : constraints.dof === 0
+              : dof === 0
               ? 'bg-green-500 text-white'
               : 'bg-yellow-500 text-white'
           }`}>
-            DOF: {constraints.dof ?? 0}
+            DOF: {dof ?? 0}
           </div>
           <svg
             className={`w-5 h-5 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}
@@ -173,19 +234,26 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
 
             {/* Single Edge Constraints */}
             <div className="mb-3">
-              <p className="text-xs text-gray-500 mb-1">Edge Constraints (select 1 edge)</p>
+              <p className="text-xs text-gray-500 mb-1">Edge Constraints (select 1 edge) or Diagonal</p>
               <div className="grid grid-cols-3 gap-1">
                 <button
                   onClick={handleAddDistance}
-                  disabled={!canAddSingleEdgeConstraint}
-                  className={`px-2 py-1 text-xs rounded ${
-                    canAddSingleEdgeConstraint
+                  className={`px-2 py-1 text-xs rounded transition-colors ${
+                    diagonalConstraintMode
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : canAddSingleEdgeConstraint
                       ? 'bg-blue-500 text-white hover:bg-blue-600'
-                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-orange-500 text-white hover:bg-orange-600'
                   }`}
-                  title="Lock edge length"
+                  title={
+                    diagonalConstraintMode
+                      ? 'Exit diagonal mode'
+                      : canAddSingleEdgeConstraint
+                      ? 'Lock edge length'
+                      : 'Click to select 2 vertices for diagonal constraint'
+                  }
                 >
-                  Distance
+                  {diagonalConstraintMode ? '✓ Diagonal' : 'Distance'}
                 </button>
                 <button
                   onClick={handleAddHorizontal}
@@ -257,10 +325,34 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
               </div>
             </div>
 
+            {/* Show diagonal mode status when active */}
+            {diagonalConstraintMode && (
+              <div className="mb-3">
+                <div className="text-xs text-gray-600 bg-yellow-50 border border-yellow-200 rounded p-2">
+                  <p className="font-medium mb-1">
+                    🎯 Diagonal Mode: Select 2 vertices ({diagonalVertices.length}/2)
+                  </p>
+                  {diagonalVertices.length > 0 && (
+                    <p className="text-gray-500">
+                      Selected: v{diagonalVertices.join(', v')}
+                    </p>
+                  )}
+                  {diagonalVertices.length === 2 && calculateDiagonalDistance() && (
+                    <p className="text-gray-700 font-medium mt-1">
+                      Distance: {calculateDiagonalDistance()?.toFixed(1)}cm
+                    </p>
+                  )}
+                  <p className="text-gray-500 mt-1 italic">
+                    Click vertices on canvas
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Selection hint */}
-            {!canAddSingleEdgeConstraint && !canAddTwoEdgeConstraint && (
+            {!canAddSingleEdgeConstraint && !canAddTwoEdgeConstraint && !diagonalConstraintMode && (
               <p className="text-xs text-gray-400 italic">
-                Click on an edge to add constraints
+                Click "Distance" to select vertices for diagonal constraint
               </p>
             )}
           </div>
@@ -287,7 +379,7 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
                       <input
                         type="checkbox"
                         checked={constraint.enabled}
-                        onChange={() => constraints.toggleConstraint(room.id, constraint.id)}
+                        onChange={() => toggleConstraint(room.id, constraint.id)}
                         className="w-3 h-3"
                       />
                       <span className={constraint.enabled ? 'text-gray-700' : 'text-gray-400'}>
@@ -297,7 +389,7 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
                       </span>
                     </div>
                     <button
-                      onClick={() => constraints.removeConstraint(room.id, constraint.id)}
+                      onClick={() => removeConstraint(room.id, constraint.id)}
                       className="text-red-500 hover:text-red-700"
                       title="Remove constraint"
                     >
@@ -315,16 +407,16 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
           <div>
             <button
               onClick={handleSolve}
-              disabled={room.constraints.length === 0 || constraints.isSolving}
+              disabled={room.constraints.length === 0 || isSolving}
               className={`w-full py-2 px-4 rounded font-medium ${
-                room.constraints.length === 0 || constraints.isSolving
+                room.constraints.length === 0 || isSolving
                   ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  : constraints.overConstrained
+                  : overConstrained
                   ? 'bg-red-500 text-white hover:bg-red-600'
                   : 'bg-green-500 text-white hover:bg-green-600'
               }`}
             >
-              {constraints.isSolving ? (
+              {isSolving ? (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -338,7 +430,7 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
             </button>
 
             {/* Warning for over-constrained */}
-            {constraints.overConstrained && (
+            {overConstrained && (
               <p className="text-xs text-red-500 mt-1">
                 ⚠️ Over-constrained (DOF &lt; 0). May not solve correctly.
               </p>

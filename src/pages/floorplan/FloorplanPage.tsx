@@ -6,7 +6,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useFloorplanStore } from './store/floorplanStore';
-import { useConstraints } from './hooks/useConstraints';
 import { useGeoRefMode } from './hooks/useGeoRefMode';
 import { Canvas } from './components/Canvas';
 import { GeoRefCanvas } from './components/GeoRefCanvas';
@@ -184,14 +183,6 @@ export const FloorplanPage: React.FC = () => {
       console.log('🏗️ FloorplanPage loaded without property context (standalone mode)');
     }
   }, [propertyId, propertyData, returnTo]);
-
-  // Constraint management hook - NEW: Additive constraint functionality
-  const constraints = useConstraints({
-    rooms: rooms,
-    selectedRoomId: selection.selectedRoomIds[0] || null,
-    updateRoom,
-    recalculateEnvelopes: recalculateAllEnvelopes
-  });
 
   // Memoize edge mapping for constraints
   // Selected edge index maps directly to room vertices
@@ -567,7 +558,7 @@ export const FloorplanPage: React.FC = () => {
           onRotateEnd={geoRefMode.endRotate}
         />
       ) : (
-        <Canvas showDimensions={config.showDimensions ?? false} constraints={constraints} />
+        <Canvas showDimensions={config.showDimensions ?? false} />
       )}
 
       {/* Back Button (Top Left) */}
@@ -672,7 +663,6 @@ export const FloorplanPage: React.FC = () => {
       {editorMode === EditorMode.Edit && getSelectedRoom() && (
         <ConstraintToolbar
           room={getSelectedRoom()!}
-          constraints={constraints}
           selectedWalls={selectedEdgeForConstraints}
           wallPropertiesPanelOpen={false}
         />

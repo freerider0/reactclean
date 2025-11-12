@@ -245,6 +245,9 @@ export interface SelectionState {
   hoverWallIndex: number | null;
   hoverApertureId: string | null;
   hoverApertureWallIndex: number | null;
+  // Diagonal constraint mode
+  diagonalConstraintMode: boolean;
+  diagonalVertices: number[];
 }
 
 export interface SelectionRectangleState {

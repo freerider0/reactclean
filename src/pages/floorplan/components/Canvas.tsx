@@ -42,7 +42,7 @@ import { snapWithPriority } from '../utils/snapping';
 import { generateWalls } from '../utils/walls';
 import { useFloorplanStore, selectAllRooms } from '../store/floorplanStore';
 import { useEditableDimensions } from '../hooks/useEditableDimensions';
-import { UseConstraintsResult } from '../hooks/useConstraints';
+import { createDistanceConstraint } from '../utils/constraints';
 import { DimensionInput } from './ui/DimensionInput';
 import {
   EditDragState,
@@ -81,10 +81,9 @@ const MIN_VERTICES = 3;
 
 interface CanvasProps {
   showDimensions?: boolean;
-  constraints?: UseConstraintsResult;
 }
 
-export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constraints }) => {
+export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number>();
 
@@ -102,9 +101,11 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
 
   // Get actions from store
   const updateRoom = useFloorplanStore(state => state.updateRoom);
+  const getRoomById = useFloorplanStore(state => state.getRoomById);
   const getSelectedRoom = useFloorplanStore(state => state.getSelectedRoom);
   const setEditorMode = useFloorplanStore(state => state.setEditorMode);
   const recalculateAllEnvelopes = useFloorplanStore(state => state.recalculateAllEnvelopes);
+  const addConstraint = useFloorplanStore(state => state.addConstraint);
   const selectRoom = useFloorplanStore(state => state.selectRoom);
   const selectVertex = useFloorplanStore(state => state.selectVertex);
   const selectEdge = useFloorplanStore(state => state.selectEdge);
@@ -115,6 +116,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
   const pasteAperture = useFloorplanStore(state => state.pasteAperture);
   const apertureClipboard = useFloorplanStore(state => state.apertureClipboard);
   const clearAllSelection = useFloorplanStore(state => state.clearAllSelection);
+  // Diagonal constraint mode
+  const addDiagonalVertex = useFloorplanStore(state => state.addDiagonalVertex);
+  const clearDiagonalConstraintMode = useFloorplanStore(state => state.clearDiagonalConstraintMode);
   const setHoverRoom = useFloorplanStore(state => state.setHoverRoom);
   const setHoverVertex = useFloorplanStore(state => state.setHoverVertex);
   const setHoverEdge = useFloorplanStore(state => state.setHoverEdge);
@@ -379,11 +383,94 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
       });
 
       // Draw dimension labels if enabled
-      if (showDimensions) {
+      if (config.showDimensions) {
         drawDimensionLabels(ctx, room, viewport, {
           selected: isSelected,
           onRegisterLabel: editableDimensions.registerDimensionLabel
         });
+
+        // Draw diagonal distance constraint labels
+        if (room.constraints) {
+          const worldVertices = room.vertices.map(v =>
+            localToWorld(v, room.position, room.rotation, room.scale)
+          );
+
+          room.constraints.forEach(constraint => {
+            if (!constraint.enabled) return;
+            if (constraint.type !== ConstraintType.Distance) return;
+            if (constraint.indices.length !== 2) return;
+
+            const v1Index = constraint.indices[0];
+            const v2Index = constraint.indices[1];
+
+            // Check if this is a diagonal constraint (non-adjacent vertices)
+            const isAdjacent = (v2Index === (v1Index + 1) % room.vertices.length) ||
+                               (v1Index === (v2Index + 1) % room.vertices.length);
+
+            if (isAdjacent) return; // Skip edge constraints (already drawn above)
+
+            // Draw diagonal dimension label
+            const v1World = worldVertices[v1Index];
+            const v2World = worldVertices[v2Index];
+
+            const dx = v2World.x - v1World.x;
+            const dy = v2World.y - v1World.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            const midWorld = {
+              x: (v1World.x + v2World.x) / 2,
+              y: (v1World.y + v2World.y) / 2
+            };
+            const midScreen = worldToScreen(midWorld, viewport);
+
+            // Format text
+            const text = distance < 1000 ? `${(distance / 100).toFixed(2)}m` : `${(distance / 100).toFixed(1)}m`;
+
+            // Draw label background
+            ctx.save();
+            ctx.font = '12px sans-serif';
+            const metrics = ctx.measureText(text);
+            const padding = 6;
+            const labelWidth = metrics.width + padding * 2;
+            const labelHeight = 20;
+
+            const bounds = {
+              x: midScreen.x - labelWidth / 2,
+              y: midScreen.y - labelHeight / 2,
+              width: labelWidth,
+              height: labelHeight
+            };
+
+            // Background
+            ctx.fillStyle = '#8b5cf6'; // Purple for diagonal constraints
+            ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+            // Border
+            ctx.strokeStyle = '#6d28d9';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+            // Text
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, midScreen.x, midScreen.y);
+
+            ctx.restore();
+
+            // Register label for click detection (reusing the same editable dimensions system)
+            if (isSelected && editableDimensions.registerDimensionLabel) {
+              editableDimensions.registerDimensionLabel({
+                roomId: room.id,
+                edgeIndex: v1Index * 1000 + v2Index, // Unique ID for diagonal constraint
+                position: midScreen,
+                bounds,
+                currentValue: distance,
+                wallVertices: [v1World, v2World]
+              });
+            }
+          });
+        }
       }
 
       // Draw constraint indicators (in edit mode) - NEW: Additive constraint visualization
@@ -450,6 +537,100 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
       ctx.restore();
     }
 
+    // Draw diagonal constraint preview line (in edit mode with diagonal mode active)
+    if (editorMode === EditorMode.Edit && selection.diagonalConstraintMode) {
+      const selectedRoom = getSelectedRoom();
+      if (selectedRoom) {
+        const worldVertices = selectedRoom.vertices.map(v =>
+          localToWorld(v, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale)
+        );
+
+        ctx.save();
+
+        if (selection.diagonalVertices.length === 1) {
+          // Draw preview line from first selected vertex to cursor
+          const v1World = worldVertices[selection.diagonalVertices[0]];
+          const v1Screen = worldToScreen(v1World, viewport);
+          const cursorWorld = drawing.currentMouseWorld;
+
+          if (cursorWorld) {
+            const cursorScreen = worldToScreen(cursorWorld, viewport);
+
+            // Draw dashed line
+            ctx.strokeStyle = '#f59e0b'; // Orange color
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 5]);
+            ctx.beginPath();
+            ctx.moveTo(v1Screen.x, v1Screen.y);
+            ctx.lineTo(cursorScreen.x, cursorScreen.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Calculate and draw distance label
+            const dx = cursorWorld.x - v1World.x;
+            const dy = cursorWorld.y - v1World.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const midX = (v1Screen.x + cursorScreen.x) / 2;
+            const midY = (v1Screen.y + cursorScreen.y) / 2;
+
+            ctx.fillStyle = '#f59e0b';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`${distance.toFixed(1)}cm`, midX, midY - 5);
+          }
+        } else if (selection.diagonalVertices.length === 2) {
+          // Draw dashed line between two selected vertices
+          const v1World = worldVertices[selection.diagonalVertices[0]];
+          const v2World = worldVertices[selection.diagonalVertices[1]];
+          const v1Screen = worldToScreen(v1World, viewport);
+          const v2Screen = worldToScreen(v2World, viewport);
+
+          // Draw dashed line
+          ctx.strokeStyle = '#10b981'; // Green color
+          ctx.lineWidth = 3;
+          ctx.setLineDash([10, 5]);
+          ctx.beginPath();
+          ctx.moveTo(v1Screen.x, v1Screen.y);
+          ctx.lineTo(v2Screen.x, v2Screen.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Calculate and draw distance label
+          const dx = v2World.x - v1World.x;
+          const dy = v2World.y - v1World.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const midX = (v1Screen.x + v2Screen.x) / 2;
+          const midY = (v1Screen.y + v2Screen.y) / 2;
+
+          ctx.fillStyle = '#10b981';
+          ctx.font = 'bold 14px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(`${distance.toFixed(1)}cm`, midX, midY - 5);
+        }
+
+        ctx.restore();
+
+        // Draw highlighted diagonal vertices
+        selection.diagonalVertices.forEach(vertexIndex => {
+          const vWorld = worldVertices[vertexIndex];
+          const vScreen = worldToScreen(vWorld, viewport);
+
+          ctx.save();
+          // Draw larger blue circle for diagonal vertices
+          ctx.strokeStyle = '#3b82f6';
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.3)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(vScreen.x, vScreen.y, 12 / viewport.zoom, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+    }
+
     // Draw vertex/edge handles (in edit mode)
     if (editorMode === EditorMode.Edit) {
       const selectedRoom = getSelectedRoom();
@@ -505,29 +686,61 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
    * Handle dimension editing submission
    */
   const handleDimensionSubmit = useCallback((newValueCm: number) => {
-    if (!editableDimensions.editingDimension || !constraints) {
+    if (!editableDimensions.editingDimension) {
       editableDimensions.cancelEditingDimension();
       return;
     }
 
     const { roomId, edgeIndex } = editableDimensions.editingDimension;
 
-    // Get wall vertices
+    // Get room
     const room = rooms.find(r => r.id === roomId);
     if (!room) {
       editableDimensions.cancelEditingDimension();
       return;
     }
 
-    const v1Index = edgeIndex;
-    const v2Index = (edgeIndex + 1) % room.vertices.length;
+    let v1Index: number, v2Index: number;
+    let isDiagonal = false;
 
-    // Add distance constraint
-    constraints.addDistanceConstraint(roomId, v1Index, v2Index, newValueCm);
+    // Check if this is a diagonal constraint (encoded as v1*1000 + v2)
+    if (edgeIndex >= 1000) {
+      // Diagonal constraint
+      v1Index = Math.floor(edgeIndex / 1000);
+      v2Index = edgeIndex % 1000;
+      isDiagonal = true;
+      console.log('📝 Editing diagonal constraint between v', v1Index, 'and v', v2Index);
+    } else {
+      // Edge constraint (adjacent vertices)
+      v1Index = edgeIndex;
+      v2Index = (edgeIndex + 1) % room.vertices.length;
+      console.log('📝 Editing edge constraint between v', v1Index, 'and v', v2Index);
+    }
+
+    // Find existing distance constraint for these vertices
+    const existingConstraint = room.constraints.find(c =>
+      c.type === ConstraintType.Distance &&
+      c.enabled &&
+      ((c.indices[0] === v1Index && c.indices[1] === v2Index) ||
+       (c.indices[0] === v2Index && c.indices[1] === v1Index))
+    );
+
+    if (existingConstraint) {
+      // Update existing constraint by removing old and adding new
+      console.log('  ✏️ Updating existing constraint', existingConstraint.id, 'from', existingConstraint.value, 'to', newValueCm);
+      const removeConstraint = useFloorplanStore.getState().removeConstraint;
+      removeConstraint(roomId, existingConstraint.id);
+    } else {
+      console.log('  ➕ Creating new constraint with value', newValueCm);
+    }
+
+    // Add new constraint with updated value
+    const constraint = createDistanceConstraint(room, v1Index, v2Index, newValueCm);
+    addConstraint(roomId, constraint, true);
 
     // Clear editing state
     editableDimensions.cancelEditingDimension();
-  }, [editableDimensions, constraints, rooms]);
+  }, [editableDimensions, addConstraint, rooms]);
 
   /**
    * Handle dimension editing cancellation
@@ -713,7 +926,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
       });
 
       // Check for dimension label click first (if dimensions are shown)
-      if (showDimensions) {
+      if (config.showDimensions) {
         const hitLabel = editableDimensions.hitTestDimensionLabel(screenX, screenY);
         if (hitLabel) {
           console.log('Dimension label clicked:', hitLabel);
@@ -794,6 +1007,43 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
         if (selectedRoom) {
           const vertexIndex = hitTestRoomVertices(worldPoint, selectedRoom, 20, viewport.zoom);
           if (vertexIndex !== -1) {
+            // Check if in diagonal constraint mode
+            if (selection.diagonalConstraintMode) {
+              console.log('🎯 Diagonal mode: clicked vertex', vertexIndex);
+              console.log('  Current selection:', selection.diagonalVertices);
+
+              // Calculate what the new length will be after adding this vertex
+              const currentVertices = selection.diagonalVertices;
+              const alreadySelected = currentVertices.includes(vertexIndex);
+
+              if (alreadySelected) {
+                console.log('  ⚠️ Vertex already selected, ignoring');
+                return;
+              }
+
+              // Add vertex to diagonal selection
+              addDiagonalVertex(vertexIndex);
+              console.log('  ✅ Added vertex to selection');
+
+              // Check if we now have 2 vertices (will have after adding)
+              const newLength = currentVertices.length + 1;
+              console.log('  New length will be:', newLength);
+
+              if (newLength === 2) {
+                // Create constraint with both vertices
+                const v1 = currentVertices[0];
+                const v2 = vertexIndex;
+                console.log('  🔧 Creating distance constraint between v', v1, 'and v', v2);
+
+                const constraint = createDistanceConstraint(selectedRoom, v1, v2);
+                addConstraint(selectedRoom.id, constraint, true);
+                clearDiagonalConstraintMode();
+                console.log('  ✅ Constraint created and diagonal mode cleared');
+              }
+              return;
+            }
+
+            // Normal vertex selection and drag
             selectVertex(vertexIndex);
             editDragState.current = createVertexDragState(selectedRoom, vertexIndex, worldPoint);
             editDragScreenStart.current = { x: screenX, y: screenY };

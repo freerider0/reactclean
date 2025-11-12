@@ -45,6 +45,15 @@ export interface RoomsSlice {
   moveApertureCrossRoom: (sourceRoomId: string, sourceWallIndex: number, targetRoomId: string, targetWallIndex: number, apertureId: string, newDistance: number, newAnchor: 'start' | 'end') => void;
   deleteAperture: (roomId: string, wallIndex: number, apertureId: string) => void;
 
+  // Constraint actions
+  addConstraint: (roomId: string, constraint: Constraint, autoSolve?: boolean) => Promise<void>;
+  removeConstraint: (roomId: string, constraintId: string) => void;
+  toggleConstraint: (roomId: string, constraintId: string) => Promise<void>;
+  solveRoomConstraints: (roomId: string) => Promise<void>;
+  clearAllConstraints: (roomId: string) => void;
+  getRoomDOF: (roomId: string) => number | null;
+  isRoomOverConstrained: (roomId: string) => boolean;
+
   // Envelope recalculation
   recalculateAllEnvelopes: () => Promise<void>;
   isCalculatingEnvelopes: boolean;
@@ -75,6 +84,10 @@ export interface SelectionSlice {
   setHoverVertex: (index: number | null) => void;
   setHoverEdge: (index: number | null) => void;
   setHoverAperture: (apertureId: string | null, wallIndex: number | null) => void;
+  // Diagonal constraint mode actions
+  startDiagonalConstraintMode: () => void;
+  addDiagonalVertex: (index: number) => void;
+  clearDiagonalConstraintMode: () => void;
 
   // Computed
   getSelectedRoom: () => Room | undefined;

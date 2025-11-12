@@ -4,10 +4,11 @@
 
 import type { StateCreator } from 'zustand';
 import type { FloorplanStore, RoomsSlice } from '../types/store';
-import type { Room } from '../../types';
+import type { Room, Constraint, ConstraintType } from '../../types';
 import { calculateFloorplanEnvelopes } from '../../utils/geometry';
 import { calculateCenterline } from '../../utils/roomJoining';
 import { generateWalls } from '../../utils/walls';
+import { solveRoom, calculateDOF, isOverConstrained } from '../../utils/constraintSolver';
 
 export const createRoomsSlice: StateCreator<
   FloorplanStore,
@@ -365,6 +366,237 @@ export const createRoomsSlice: StateCreator<
     get().pushHistory(`Deleted aperture`);
   },
 
+  // ============================================
+  // CONSTRAINT ACTIONS
+  // ============================================
+
+  /**
+   * Add a constraint to a room and auto-solve
+   */
+  addConstraint: async (roomId, constraint, autoSolve = true) => {
+    const room = get().rooms.get(roomId);
+    if (!room) {
+      console.warn(`Room ${roomId} not found`);
+      return;
+    }
+
+    // Add constraint to room
+    const updatedRoom = {
+      ...room,
+      constraints: [...room.constraints, constraint]
+    };
+
+    // Auto-solve if requested
+    if (autoSolve) {
+      try {
+        console.log('🔧 Auto-solving constraints after adding...');
+        const solvedRoom = await solveRoom(updatedRoom);
+
+        console.log('✅ Constraint solved, updating room vertices...');
+        console.log('  Old vertices:', room.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+        console.log('  New vertices:', solvedRoom.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+
+        // Update room with solved geometry
+        set((state) => {
+          const currentRoom = state.rooms.get(roomId);
+          if (!currentRoom) return;
+
+          const finalRoom = {
+            ...currentRoom,
+            vertices: solvedRoom.vertices,
+            originalVertices: solvedRoom.vertices.map(v => ({ ...v })), // Update original vertices after solve
+            walls: solvedRoom.walls,
+            constraints: solvedRoom.constraints,
+            primitives: solvedRoom.primitives,
+            centerlineVertices: calculateCenterline(solvedRoom)
+          };
+
+          state.rooms.set(roomId, finalRoom);
+        });
+
+        // Recalculate envelopes after constraint solving
+        console.log('🔄 Recalculating envelopes after constraint solving...');
+        await get().recalculateAllEnvelopes();
+        console.log('✨ Envelope recalculation complete');
+      } catch (error) {
+        console.error('Error auto-solving after adding constraint:', error);
+        // Fallback: just add the constraint without solving
+        set((state) => {
+          state.rooms.set(roomId, updatedRoom);
+        });
+      }
+    } else {
+      // Just add the constraint without solving
+      set((state) => {
+        state.rooms.set(roomId, updatedRoom);
+      });
+    }
+
+    // Push to history
+    get().pushHistory(`Added constraint`);
+  },
+
+  /**
+   * Remove a constraint from a room
+   */
+  removeConstraint: (roomId, constraintId) => {
+    set((state) => {
+      const room = state.rooms.get(roomId);
+      if (!room) {
+        console.warn(`Room ${roomId} not found`);
+        return;
+      }
+
+      const updatedRoom = {
+        ...room,
+        constraints: room.constraints.filter(c => c.id !== constraintId)
+      };
+
+      state.rooms.set(roomId, updatedRoom);
+    });
+
+    // Push to history
+    get().pushHistory(`Removed constraint`);
+  },
+
+  /**
+   * Toggle constraint enabled state and auto-solve
+   */
+  toggleConstraint: async (roomId, constraintId) => {
+    const room = get().rooms.get(roomId);
+    if (!room) {
+      console.warn(`Room ${roomId} not found`);
+      return;
+    }
+
+    const updatedRoom = {
+      ...room,
+      constraints: room.constraints.map(c =>
+        c.id === constraintId ? { ...c, enabled: !c.enabled } : c
+      )
+    };
+
+    try {
+      console.log('🔧 Auto-solving constraints after toggling...');
+      const solvedRoom = await solveRoom(updatedRoom);
+
+      // Update room with solved geometry
+      set((state) => {
+        const currentRoom = state.rooms.get(roomId);
+        if (!currentRoom) return;
+
+        const finalRoom = {
+          ...currentRoom,
+          vertices: solvedRoom.vertices,
+          walls: solvedRoom.walls,
+          constraints: solvedRoom.constraints,
+          primitives: solvedRoom.primitives,
+          centerlineVertices: calculateCenterline(solvedRoom)
+        };
+
+        state.rooms.set(roomId, finalRoom);
+      });
+
+      // Recalculate envelopes after constraint solving
+      console.log('🔄 Recalculating envelopes after toggling constraint...');
+      await get().recalculateAllEnvelopes();
+    } catch (error) {
+      console.error('Error auto-solving after toggling constraint:', error);
+      // Fallback: just toggle without solving
+      set((state) => {
+        state.rooms.set(roomId, updatedRoom);
+      });
+    }
+
+    // Push to history
+    get().pushHistory(`Toggled constraint`);
+  },
+
+  /**
+   * Solve constraints for a room
+   */
+  solveRoomConstraints: async (roomId) => {
+    const room = get().rooms.get(roomId);
+    if (!room) {
+      console.warn(`Room ${roomId} not found`);
+      return;
+    }
+
+    try {
+      console.log('🔧 Solving constraints manually...');
+      const solvedRoom = await solveRoom(room);
+
+      // Update room with solved geometry
+      set((state) => {
+        const currentRoom = state.rooms.get(roomId);
+        if (!currentRoom) return;
+
+        const finalRoom = {
+          ...currentRoom,
+          vertices: solvedRoom.vertices,
+          originalVertices: solvedRoom.vertices.map(v => ({ ...v })), // Update original vertices after solve
+          walls: solvedRoom.walls,
+          constraints: solvedRoom.constraints,
+          primitives: solvedRoom.primitives,
+          centerlineVertices: calculateCenterline(solvedRoom)
+        };
+
+        state.rooms.set(roomId, finalRoom);
+      });
+
+      // Recalculate envelopes after constraint solving
+      console.log('🔄 Recalculating envelopes after manual constraint solving...');
+      await get().recalculateAllEnvelopes();
+    } catch (error) {
+      console.error('Error solving constraints:', error);
+    }
+
+    // Push to history
+    get().pushHistory(`Solved constraints`);
+  },
+
+  /**
+   * Clear all constraints from a room
+   */
+  clearAllConstraints: (roomId) => {
+    set((state) => {
+      const room = state.rooms.get(roomId);
+      if (!room) {
+        console.warn(`Room ${roomId} not found`);
+        return;
+      }
+
+      const updatedRoom = {
+        ...room,
+        constraints: [],
+        primitives: undefined
+      };
+
+      state.rooms.set(roomId, updatedRoom);
+    });
+
+    // Push to history
+    get().pushHistory(`Cleared all constraints`);
+  },
+
+  /**
+   * Calculate degrees of freedom for a room
+   */
+  getRoomDOF: (roomId) => {
+    const room = get().rooms.get(roomId);
+    if (!room) return null;
+    return calculateDOF(room);
+  },
+
+  /**
+   * Check if a room is over-constrained
+   */
+  isRoomOverConstrained: (roomId) => {
+    const room = get().rooms.get(roomId);
+    if (!room) return false;
+    return isOverConstrained(room);
+  },
+
   /**
    * Recalculate envelopes for all rooms
    * Should be called after rooms are joined/positioned in assembly mode
@@ -404,15 +636,19 @@ export const createRoomsSlice: StateCreator<
         const result = envelopeMap.get(room.id);
         if (!result) return;
 
+        // Get FRESH room data from store (not the captured old data)
+        const freshRoom = state.rooms.get(room.id);
+        if (!freshRoom) return;
+
         console.log(`✨ Room ${room.id}: envelope updated`);
         console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
-        console.log(`  → room.vertices: ${room.vertices.length}, centerlineVertices: ${room.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
+        console.log(`  → room.vertices: ${freshRoom.vertices.length}, centerlineVertices: ${freshRoom.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
         console.log(`  → Using ${result.walls.length} walls from envelope (already classified)`);
         console.log(`  → Wall types:`, result.walls.map(w => w.wallType).join(', '));
 
-        // Start with envelope data
+        // Start with envelope data - use FRESH room data
         let updatedRoom: Room = {
-          ...room,
+          ...freshRoom,
           envelopeVertices: result.envelope,
           innerBoundaryVertices: result.innerBoundary,
           debugMergedCenterline: result.debugCenterline,
@@ -423,32 +659,36 @@ export const createRoomsSlice: StateCreator<
         // Check if vertices were updated by collinear vertex insertion
         if (result.updatedVertices) {
           // New vertices were inserted from merge
-          console.log(`  ⭐ Vertices updated: ${room.vertices.length} → ${result.updatedVertices.length}`);
+          console.log(`  ⭐ Vertices updated: ${freshRoom.vertices.length} → ${result.updatedVertices.length}`);
           updatedRoom = {
             ...updatedRoom,
             vertices: result.updatedVertices,
-            originalVertices: room.originalVertices || [...room.vertices], // Preserve or initialize original vertices
+            originalVertices: freshRoom.originalVertices || [...freshRoom.vertices], // Preserve or initialize original vertices
             centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: result.updatedVertices }),
             walls: generateWalls(
               result.updatedVertices,
-              room.wallThickness,
-              room.walls,
-              room.vertices // Pass original vertices for matching
-            )
+              freshRoom.wallThickness,
+              freshRoom.walls,
+              freshRoom.vertices // Pass original vertices for matching
+            ),
+            constraints: freshRoom.constraints, // Preserve constraints
+            primitives: freshRoom.primitives     // Preserve primitives
           };
-        } else if (room.originalVertices && room.vertices.length > room.originalVertices.length) {
+        } else if (freshRoom.originalVertices && freshRoom.vertices.length > freshRoom.originalVertices.length) {
           // No new vertices from merge, but room has auto-inserted vertices that should be removed
-          console.log(`  🔄 ${room.id}: Resetting to original vertices (${room.vertices.length} → ${room.originalVertices.length})`);
+          console.log(`  🔄 ${freshRoom.id}: Resetting to original vertices (${freshRoom.vertices.length} → ${freshRoom.originalVertices.length})`);
           updatedRoom = {
             ...updatedRoom,
-            vertices: [...room.originalVertices],
-            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: room.originalVertices }),
+            vertices: [...freshRoom.originalVertices],
+            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: freshRoom.originalVertices }),
             walls: generateWalls(
-              room.originalVertices,
-              room.wallThickness,
-              room.walls,
-              room.vertices // Pass current vertices for matching
-            )
+              freshRoom.originalVertices,
+              freshRoom.wallThickness,
+              freshRoom.walls,
+              freshRoom.vertices // Pass current vertices for matching
+            ),
+            constraints: freshRoom.constraints, // Preserve constraints
+            primitives: freshRoom.primitives     // Preserve primitives
           };
         }
 
