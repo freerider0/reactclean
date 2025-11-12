@@ -96,6 +96,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
         // Clipboard
         clipboard: [],
         pasteOffset: 0,
+        apertureClipboard: null,
 
         // Drag state
         dragState: {
@@ -245,6 +246,103 @@ export const useFloorplanStore = create<FloorplanStore>()(
           });
 
           console.log(`📌 Pasted ${clipboard.length} rooms`);
+        },
+
+        /**
+         * Copy an aperture to the aperture clipboard
+         */
+        copyAperture: (roomId, wallIndex, apertureId) => {
+          const room = get().rooms.get(roomId);
+          if (!room) {
+            console.warn(`Room ${roomId} not found`);
+            return;
+          }
+
+          const wall = room.walls[wallIndex];
+          if (!wall || !wall.apertures) {
+            console.warn(`Wall ${wallIndex} not found or has no apertures`);
+            return;
+          }
+
+          const aperture = wall.apertures.find(a => a.id === apertureId);
+          if (!aperture) {
+            console.warn(`Aperture ${apertureId} not found on wall ${wallIndex}`);
+            return;
+          }
+
+          // Deep copy the aperture to clipboard
+          set((state) => {
+            state.apertureClipboard = {
+              aperture: { ...aperture },
+              sourceRoomId: roomId,
+              sourceWallIndex: wallIndex,
+            };
+          });
+
+          console.log(`📋 Copied aperture ${apertureId} to clipboard`);
+        },
+
+        /**
+         * Paste an aperture from the aperture clipboard
+         */
+        pasteAperture: (targetRoomId, targetWallIndex, targetDistance, targetAnchor) => {
+          const clipboard = get().apertureClipboard;
+          if (!clipboard) {
+            console.log('No aperture to paste');
+            return;
+          }
+
+          const targetRoom = get().rooms.get(targetRoomId);
+          if (!targetRoom) {
+            console.warn(`Target room ${targetRoomId} not found`);
+            return;
+          }
+
+          const targetWall = targetRoom.walls[targetWallIndex];
+          if (!targetWall) {
+            console.warn(`Target wall ${targetWallIndex} not found`);
+            return;
+          }
+
+          // Create new aperture with new ID
+          const newApertureId = `aperture-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const newAperture = {
+            ...clipboard.aperture,
+            id: newApertureId,
+            distance: targetDistance ?? clipboard.aperture.distance,
+            anchorVertex: targetAnchor ?? clipboard.aperture.anchorVertex,
+          };
+
+          // Add to target wall
+          set((state) => {
+            const room = state.rooms.get(targetRoomId);
+            if (!room) return;
+
+            const wall = room.walls[targetWallIndex];
+            if (!wall) return;
+
+            if (!wall.apertures) {
+              wall.apertures = [];
+            }
+
+            wall.apertures.push(newAperture);
+          });
+
+          // Push to history
+          get().pushHistory(`Pasted aperture`);
+
+          console.log(`📌 Pasted aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+        },
+
+        /**
+         * Clear the aperture clipboard
+         */
+        clearApertureClipboard: () => {
+          set((state) => {
+            state.apertureClipboard = null;
+          });
+
+          console.log(`🗑️ Cleared aperture clipboard`);
         },
 
         /**

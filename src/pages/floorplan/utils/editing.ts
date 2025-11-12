@@ -31,6 +31,7 @@ export interface EditDragState {
   sourceWallIndex?: number;
   sourceRoomId?: string;
   targetWallIndex?: number | null; // Target wall during drag (can be different from source)
+  targetRoomId?: string; // Target room during drag (can be different from source room)
   originalApertureDistance?: number;
   originalApertureAnchor?: 'start' | 'end';
   apertureClickOffsetPx?: number; // Offset from aperture start where user clicked (for better UX)
@@ -587,6 +588,8 @@ export function createApertureDragState(
     apertureId,
     sourceWallIndex: wallIndex,
     sourceRoomId: room.id,
+    targetWallIndex: wallIndex, // Initially same wall
+    targetRoomId: room.id, // Initially same room
     originalApertureDistance: aperture.distance,
     originalApertureAnchor: aperture.anchorVertex,
     apertureClickOffsetPx: clickOffsetPx, // Store click offset for drag

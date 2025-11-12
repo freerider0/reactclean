@@ -42,6 +42,7 @@ export interface RoomsSlice {
   // Aperture actions
   updateAperture: (roomId: string, wallIndex: number, apertureId: string, updates: Partial<import('../../types').Aperture>) => void;
   moveAperture: (roomId: string, sourceWallIndex: number, targetWallIndex: number, apertureId: string, newDistance: number, newAnchor: 'start' | 'end') => void;
+  moveApertureCrossRoom: (sourceRoomId: string, sourceWallIndex: number, targetRoomId: string, targetWallIndex: number, apertureId: string, newDistance: number, newAnchor: 'start' | 'end') => void;
   deleteAperture: (roomId: string, wallIndex: number, apertureId: string) => void;
 
   // Envelope recalculation
@@ -186,6 +187,11 @@ export interface FloorplanStore extends
   // Clipboard
   clipboard: Room[];
   pasteOffset: number;
+  apertureClipboard: {
+    aperture: import('../../types').Aperture;
+    sourceRoomId: string;
+    sourceWallIndex: number;
+  } | null;
 
   // Drag state
   dragState: DragState;
@@ -218,6 +224,11 @@ export interface FloorplanStore extends
   copy: (roomIds: string[]) => void;
   cut: (roomIds: string[]) => void;
   paste: () => void;
+
+  // Aperture clipboard
+  copyAperture: (roomId: string, wallIndex: number, apertureId: string) => void;
+  pasteAperture: (targetRoomId: string, targetWallIndex: number, targetDistance?: number, targetAnchor?: 'start' | 'end') => void;
+  clearApertureClipboard: () => void;
 
   // Drag state
   setDragState: (state: Partial<DragState>) => void;

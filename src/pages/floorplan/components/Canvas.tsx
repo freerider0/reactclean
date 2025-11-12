@@ -110,6 +110,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
   const selectEdge = useFloorplanStore(state => state.selectEdge);
   const selectAperture = useFloorplanStore(state => state.selectAperture);
   const moveAperture = useFloorplanStore(state => state.moveAperture);
+  const moveApertureCrossRoom = useFloorplanStore(state => state.moveApertureCrossRoom);
+  const copyAperture = useFloorplanStore(state => state.copyAperture);
+  const pasteAperture = useFloorplanStore(state => state.pasteAperture);
+  const apertureClipboard = useFloorplanStore(state => state.apertureClipboard);
   const clearAllSelection = useFloorplanStore(state => state.clearAllSelection);
   const setHoverRoom = useFloorplanStore(state => state.setHoverRoom);
   const setHoverVertex = useFloorplanStore(state => state.setHoverVertex);
@@ -141,6 +145,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
     currentPoint: null
   });
 
+  // Visual feedback state for copy/paste operations
+  const [visualFeedback, setVisualFeedback] = useState<{
+    show: boolean;
+    message: string;
+    position: { x: number; y: number };
+  } | null>(null);
+
   // Edit mode drag state (use refs for animation loop access)
   const editDragState = useRef<EditDragState>({
     isDragging: false,
@@ -159,6 +170,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
   const assemblyDragScreenStart = useRef<{ x: number; y: number } | null>(null);
   const assemblyGuideLines = useRef<GuideLine[]>([]);
   const lastSnapResult = useRef<RoomSnapResult | null>(null);
+
+  // Long press detection for copy/paste
+  const LONG_PRESS_DURATION = 500; // ms
+  const LONG_PRESS_MOVE_THRESHOLD = 5; // px
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const longPressStartPos = useRef<{ x: number; y: number } | null>(null);
+  const isLongPressing = useRef<boolean>(false);
 
   // Editable dimensions hook
   const editableDimensions = useEditableDimensions();
@@ -270,11 +288,18 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
     // Draw aperture ghost preview (when dragging in edit mode)
     if (editorMode === EditorMode.Edit && editDragState.current.dragType === 'aperture' &&
         editDragState.current.isDragging && editDragState.current.targetWallIndex !== null &&
-        editDragState.current.targetWallIndex !== undefined) {
+        editDragState.current.targetWallIndex !== undefined && editDragState.current.targetRoomId) {
 
-      const selectedRoom = rooms.find(r => selection.selectedRoomIds.includes(r.id));
-      if (selectedRoom && editDragState.current.apertureId && editDragState.current.sourceWallIndex !== undefined) {
-        const sourceWall = selectedRoom.walls[editDragState.current.sourceWallIndex];
+      // Get source room to get aperture info
+      const sourceRoomId = editDragState.current.sourceRoomId;
+      const sourceRoom = rooms.find(r => r.id === sourceRoomId);
+
+      // Get target room to draw ghost on
+      const targetRoomId = editDragState.current.targetRoomId;
+      const targetRoom = rooms.find(r => r.id === targetRoomId);
+
+      if (sourceRoom && targetRoom && editDragState.current.apertureId && editDragState.current.sourceWallIndex !== undefined) {
+        const sourceWall = sourceRoom.walls[editDragState.current.sourceWallIndex];
         const aperture = sourceWall?.apertures?.find(a => a.id === editDragState.current.apertureId);
 
         if (aperture) {
@@ -284,32 +309,33 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
             const result = calculateApertureDrag({
               worldPoint: currentWorldPoint,
               dragState: editDragState.current,
-              targetRoom: selectedRoom,
+              targetRoom, // Use target room (can be different from source)
               targetWallIndex: editDragState.current.targetWallIndex
             });
 
             if (result) {
               // Get target wall to calculate validation
-              const targetWall = selectedRoom.walls[result.targetWallIndex];
-              const vertexArray = selectedRoom.vertices;
+              const targetWall = targetRoom.walls[result.targetWallIndex];
+              const vertexArray = targetRoom.vertices;
               const n = vertexArray.length;
 
               let isValid = true;
               if (targetWall && targetWall.vertexIndex < n) {
                 const v1Local = vertexArray[targetWall.vertexIndex];
                 const v2Local = vertexArray[(targetWall.vertexIndex + 1) % n];
-                const v1World = localToWorld(v1Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
-                const v2World = localToWorld(v2Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
+                const v1World = localToWorld(v1Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
+                const v2World = localToWorld(v2Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
                 const wallLengthPx = calculateWallLength(v1World, v2World);
 
                 // Validate position
+                // For cross-room moves, don't exclude the aperture ID since it's on a different wall
                 const validation = validateAperturePosition({
                   aperture,
                   targetWall,
                   targetDistance: result.newDistance,
                   targetAnchor: result.newAnchor,
                   wallLengthPx,
-                  excludeApertureId: editDragState.current.sourceWallIndex === result.targetWallIndex ?
+                  excludeApertureId: (sourceRoomId === targetRoomId && editDragState.current.sourceWallIndex === result.targetWallIndex) ?
                     editDragState.current.apertureId : undefined
                 });
 
@@ -323,10 +349,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
                 }
               }
 
-              // Draw the ghost
+              // Draw the ghost on TARGET room
               drawApertureGhost(
                 ctx,
-                selectedRoom,
+                targetRoom, // Draw on target room (can be different from source)
                 result.targetWallIndex,
                 aperture,
                 result.newDistance,
@@ -634,6 +660,30 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
   }, [editorMode, viewport, getSelectedRoom, rooms, selectRoom, setEditorMode, updateRoom, recalculateAllEnvelopes]);
 
   /**
+   * Clear long press timer helper
+   */
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    longPressStartPos.current = null;
+    isLongPressing.current = false;
+  }, []);
+
+  /**
+   * Show visual feedback for copy/paste operations
+   */
+  const showVisualFeedback = useCallback((message: string, x: number, y: number) => {
+    setVisualFeedback({ show: true, message, position: { x, y } });
+
+    // Auto-hide after 1.5 seconds
+    setTimeout(() => {
+      setVisualFeedback(null);
+    }, 1500);
+  }, []);
+
+  /**
    * Mouse down handler
    */
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -756,15 +806,37 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
           const apertureHit = hitTestApertures(worldPoint, selectedRoom);
           if (apertureHit) {
             console.log(`🚪 Aperture hit detected: ${apertureHit.apertureId} on wall ${apertureHit.wallIndex}`);
-            // Create aperture drag state
-            editDragState.current = createApertureDragState(
+
+            // Start long press timer for copy operation
+            longPressStartPos.current = { x: screenX, y: screenY };
+            isLongPressing.current = true;
+
+            // Store the aperture hit info for potential drag or copy
+            const tempDragState = createApertureDragState(
               selectedRoom,
               apertureHit.wallIndex,
               apertureHit.apertureId,
               worldPoint
             );
+
+            longPressTimer.current = setTimeout(() => {
+              // Long press completed - trigger copy
+              console.log('⏱️ Long press completed - copying aperture');
+              copyAperture(selectedRoom.id, apertureHit.wallIndex, apertureHit.apertureId);
+
+              // Show visual feedback
+              if (longPressStartPos.current) {
+                showVisualFeedback('Aperture Copied', longPressStartPos.current.x, longPressStartPos.current.y);
+              }
+
+              isLongPressing.current = false;
+              longPressStartPos.current = null;
+            }, LONG_PRESS_DURATION);
+
+            // Store drag state for potential drag (if user moves before timer expires)
+            editDragState.current = tempDragState;
             editDragScreenStart.current = { x: screenX, y: screenY };
-            // TODO: Set selection state for aperture (when we add aperture selection to store)
+
             return;
           }
         }
@@ -829,6 +901,83 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
               selectRoom(closestRoomId);
               // Select the edge
               selectEdge(closestEdgeIndex);
+
+              // Start long press timer for paste operation (if clipboard has data)
+              if (apertureClipboard) {
+                console.log('📋 Aperture clipboard has data, starting long press timer for paste');
+                longPressStartPos.current = { x: screenX, y: screenY };
+                isLongPressing.current = true;
+
+                longPressTimer.current = setTimeout(() => {
+                  // Long press completed - trigger paste
+                  console.log('⏱️ Long press completed on wall - pasting aperture');
+
+                  // Find closest wall to paste on
+                  let targetRoomId: string | null = null;
+                  let targetWallIndex: number | null = null;
+                  let minWallDistance = Infinity;
+                  let targetDistance = 0;
+                  let targetAnchor: 'start' | 'end' = 'start';
+
+                  for (const room of rooms) {
+                    const vertexArray = room.vertices;
+                    const n = vertexArray.length;
+
+                    for (let i = 0; i < room.walls.length; i++) {
+                      const wall = room.walls[i];
+                      if (wall.vertexIndex >= n) continue;
+
+                      const v1Local = vertexArray[wall.vertexIndex];
+                      const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+                      const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+                      const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+                      const dx = v2World.x - v1World.x;
+                      const dy = v2World.y - v1World.y;
+                      const len = Math.sqrt(dx * dx + dy * dy);
+                      if (len === 0) continue;
+
+                      const t = Math.max(0, Math.min(1, ((worldPoint.x - v1World.x) * dx + (worldPoint.y - v1World.y) * dy) / (len * len)));
+                      const projX = v1World.x + t * dx;
+                      const projY = v1World.y + t * dy;
+                      const dist = Math.sqrt((worldPoint.x - projX) ** 2 + (worldPoint.y - projY) ** 2);
+
+                      if (dist < minWallDistance) {
+                        minWallDistance = dist;
+                        targetRoomId = room.id;
+                        targetWallIndex = i;
+
+                        // Calculate position on wall
+                        const positionPx = t * len;
+                        const distanceFromStartPx = positionPx;
+                        const distanceFromEndPx = len - positionPx;
+
+                        if (distanceFromStartPx < distanceFromEndPx) {
+                          targetAnchor = 'start';
+                          targetDistance = distanceFromStartPx / 100;
+                        } else {
+                          targetAnchor = 'end';
+                          targetDistance = distanceFromEndPx / 100;
+                        }
+                      }
+                    }
+                  }
+
+                  if (targetRoomId && targetWallIndex !== null) {
+                    console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+                    pasteAperture(targetRoomId, targetWallIndex, targetDistance, targetAnchor);
+
+                    // Show visual feedback
+                    if (longPressStartPos.current) {
+                      showVisualFeedback('Aperture Pasted', longPressStartPos.current.x, longPressStartPos.current.y);
+                    }
+                  }
+
+                  isLongPressing.current = false;
+                  longPressStartPos.current = null;
+                }, LONG_PRESS_DURATION);
+              }
+
               clickedInEnvelopeArea = true;
               break;
             }
@@ -919,7 +1068,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
         return;
       }
     }
-  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, selectRoom, selectVertex, selectEdge, setEditorMode, clearAllSelection, startDrawing, addDrawingVertex, startPanning, updateRoom, recalculateAllEnvelopes]);
+  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, getSelectedRoom, selectRoom, selectVertex, selectEdge, setEditorMode, clearAllSelection, startDrawing, addDrawingVertex, startPanning, updateRoom, recalculateAllEnvelopes, copyAperture, pasteAperture, apertureClipboard, showVisualFeedback]);
 
   /**
    * Mouse move handler
@@ -932,6 +1081,20 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
     const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
+
+    // Check for long press cancellation due to movement
+    if (isLongPressing.current && longPressStartPos.current) {
+      const dx = screenX - longPressStartPos.current.x;
+      const dy = screenY - longPressStartPos.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance > LONG_PRESS_MOVE_THRESHOLD) {
+        // Movement exceeded threshold - cancel long press and start drag
+        console.log('🚫 Long press cancelled due to movement - starting drag');
+        clearLongPressTimer();
+        // Drag will be handled by existing edit mode logic below
+      }
+    }
 
     // Update panning
     if (isPanning && panStartPoint) {
@@ -998,47 +1161,54 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
           });
           return;
         } else if (editDragState.current.dragType === 'aperture' && editDragState.current.apertureId) {
-          // Aperture drag - detect target wall and track position
+          // Aperture drag - detect target wall across ALL rooms
           let targetWallIndex: number | null = null;
+          let targetRoomId: string | null = null;
+          let minDistance = Infinity;
 
           // Store current world point for rendering ghost
           editDragCurrentWorldPoint.current = worldPoint;
 
-          // Check walls on selected room first
-          for (let i = 0; i < selectedRoom.walls.length; i++) {
-            const wall = selectedRoom.walls[i];
-            const vertexArray = selectedRoom.vertices;
+          // Check walls on ALL rooms (not just selected room) - find closest wall
+          for (const room of rooms) {
+            const vertexArray = room.vertices;
             const n = vertexArray.length;
 
-            if (wall.vertexIndex >= n) continue;
+            for (let i = 0; i < room.walls.length; i++) {
+              const wall = room.walls[i];
 
-            const v1Local = vertexArray[wall.vertexIndex];
-            const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
-            const v1World = localToWorld(v1Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
-            const v2World = localToWorld(v2Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
+              if (wall.vertexIndex >= n) continue;
 
-            // Check if mouse is close to this wall edge
-            const dx = v2World.x - v1World.x;
-            const dy = v2World.y - v1World.y;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            if (len === 0) continue;
+              const v1Local = vertexArray[wall.vertexIndex];
+              const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+              const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+              const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
 
-            const t = Math.max(0, Math.min(1, ((worldPoint.x - v1World.x) * dx + (worldPoint.y - v1World.y) * dy) / (len * len)));
-            const projX = v1World.x + t * dx;
-            const projY = v1World.y + t * dy;
-            const dist = Math.sqrt((worldPoint.x - projX) ** 2 + (worldPoint.y - projY) ** 2);
+              // Check if mouse is close to this wall edge
+              const dx = v2World.x - v1World.x;
+              const dy = v2World.y - v1World.y;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              if (len === 0) continue;
 
-            // Threshold for wall detection during drag (larger than hit threshold)
-            if (dist < 30) {
-              targetWallIndex = i;
-              break;
+              const t = Math.max(0, Math.min(1, ((worldPoint.x - v1World.x) * dx + (worldPoint.y - v1World.y) * dy) / (len * len)));
+              const projX = v1World.x + t * dx;
+              const projY = v1World.y + t * dy;
+              const dist = Math.sqrt((worldPoint.x - projX) ** 2 + (worldPoint.y - projY) ** 2);
+
+              // Keep track of closest wall across all rooms
+              if (dist < minDistance && dist < 30) {
+                minDistance = dist;
+                targetWallIndex = i;
+                targetRoomId = room.id;
+              }
             }
           }
 
-          // Store target wall in drag state for use in mouseUp and rendering
+          // Store target wall AND room in drag state for use in mouseUp and rendering
           editDragState.current = {
             ...editDragState.current,
-            targetWallIndex
+            targetWallIndex,
+            targetRoomId
           };
 
           return;
@@ -1173,7 +1343,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
       }
       return;
     }
-  }, [editorMode, viewport, drawing, selection, rooms, getSelectedRoom, getFirstSelectedRoomId, config, selectionRectangle, updateRoom, setHoverRoom, setHoverVertex, setHoverEdge, setHoverWall, panViewport, isPanning, panStartPoint, setCurrentMouseWorld]);
+  }, [editorMode, viewport, drawing, selection, rooms, getSelectedRoom, getFirstSelectedRoomId, config, selectionRectangle, updateRoom, setHoverRoom, setHoverVertex, setHoverEdge, setHoverWall, panViewport, isPanning, panStartPoint, setCurrentMouseWorld, clearLongPressTimer]);
 
   /**
    * Mouse up handler
@@ -1184,6 +1354,86 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
     const screenX = rect ? e.clientX - rect.left : 0;
     const screenY = rect ? e.clientY - rect.top : 0;
     const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
+
+    // Handle long press release for paste operation on wall
+    if (editorMode === EditorMode.Edit && isLongPressing.current && longPressStartPos.current && apertureClipboard) {
+      const dx = screenX - longPressStartPos.current.x;
+      const dy = screenY - longPressStartPos.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Only trigger paste if movement was below threshold (user held still)
+      if (distance <= LONG_PRESS_MOVE_THRESHOLD) {
+        console.log('⏱️ Long press released - checking for wall paste');
+
+        // Find closest wall across ALL rooms
+        let targetRoomId: string | null = null;
+        let targetWallIndex: number | null = null;
+        let minDistance = Infinity;
+        let targetDistance = 0;
+        let targetAnchor: 'start' | 'end' = 'start';
+
+        for (const room of rooms) {
+          const vertexArray = room.vertices;
+          const n = vertexArray.length;
+
+          for (let i = 0; i < room.walls.length; i++) {
+            const wall = room.walls[i];
+            if (wall.vertexIndex >= n) continue;
+
+            const v1Local = vertexArray[wall.vertexIndex];
+            const v2Local = vertexArray[(wall.vertexIndex + 1) % n];
+            const v1World = localToWorld(v1Local, room.position, room.rotation, room.scale);
+            const v2World = localToWorld(v2Local, room.position, room.rotation, room.scale);
+
+            const dx = v2World.x - v1World.x;
+            const dy = v2World.y - v1World.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) continue;
+
+            const t = Math.max(0, Math.min(1, ((worldPoint.x - v1World.x) * dx + (worldPoint.y - v1World.y) * dy) / (len * len)));
+            const projX = v1World.x + t * dx;
+            const projY = v1World.y + t * dy;
+            const dist = Math.sqrt((worldPoint.x - projX) ** 2 + (worldPoint.y - projY) ** 2);
+
+            if (dist < minDistance && dist < 30) {
+              minDistance = dist;
+              targetRoomId = room.id;
+              targetWallIndex = i;
+
+              // Calculate position on wall
+              const positionPx = t * len;
+              const distanceFromStartPx = positionPx;
+              const distanceFromEndPx = len - positionPx;
+
+              if (distanceFromStartPx < distanceFromEndPx) {
+                targetAnchor = 'start';
+                targetDistance = distanceFromStartPx / 100;
+              } else {
+                targetAnchor = 'end';
+                targetDistance = distanceFromEndPx / 100;
+              }
+            }
+          }
+        }
+
+        if (targetRoomId && targetWallIndex !== null) {
+          console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+          pasteAperture(targetRoomId, targetWallIndex, targetDistance, targetAnchor);
+
+          // Show visual feedback
+          showVisualFeedback('Aperture Pasted', screenX, screenY);
+        }
+      }
+
+      // Clear long press state
+      clearLongPressTimer();
+      return;
+    }
+
+    // Clear long press timer if still active (user released without completing long press)
+    if (isLongPressing.current) {
+      clearLongPressTimer();
+    }
 
     // Complete rectangle selection
     if (selectionRectangle.isSelecting && selectionRectangle.startPoint && selectionRectangle.currentPoint) {
@@ -1270,73 +1520,112 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
           clearEdgeSelection();
         }
       } else if (editDragState.current.dragType === 'aperture' && editDragState.current.isDragging) {
-        // Handle aperture drop
+        // Handle aperture drop (supports cross-room moves)
         const apertureId = editDragState.current.apertureId;
         const sourceWallIndex = editDragState.current.sourceWallIndex;
         const sourceRoomId = editDragState.current.sourceRoomId;
         const targetWallIndex = editDragState.current.targetWallIndex;
+        const targetRoomId = editDragState.current.targetRoomId;
 
-        if (selectedRoom && apertureId !== undefined && sourceWallIndex !== undefined &&
-            sourceRoomId === selectedRoom.id && targetWallIndex !== null && targetWallIndex !== undefined) {
+        if (apertureId !== undefined && sourceWallIndex !== undefined &&
+            sourceRoomId && targetRoomId && targetWallIndex !== null && targetWallIndex !== undefined) {
+
+          // Get source and target rooms
+          const sourceRoom = rooms.find(r => r.id === sourceRoomId);
+          const targetRoom = rooms.find(r => r.id === targetRoomId);
+
+          if (!sourceRoom || !targetRoom) {
+            console.warn('Source or target room not found');
+            return;
+          }
 
           // Get source wall and aperture info
-          const sourceWall = selectedRoom.walls[sourceWallIndex];
+          const sourceWall = sourceRoom.walls[sourceWallIndex];
           const aperture = sourceWall?.apertures?.find(a => a.id === apertureId);
 
           if (sourceWall && aperture) {
-            // Calculate target position using calculateApertureDrag
+            // Calculate target position using target room
             const result = calculateApertureDrag({
               worldPoint,
               dragState: editDragState.current,
-              targetRoom: selectedRoom,
+              targetRoom, // Use target room (can be different from source)
               targetWallIndex
             });
 
             if (result) {
               // Get target wall vertices to calculate wall length
-              const targetWall = selectedRoom.walls[result.targetWallIndex];
-              const vertexArray = selectedRoom.vertices;
+              const targetWall = targetRoom.walls[result.targetWallIndex];
+              const vertexArray = targetRoom.vertices;
               const n = vertexArray.length;
 
               if (targetWall && targetWall.vertexIndex < n) {
                 const v1Local = vertexArray[targetWall.vertexIndex];
                 const v2Local = vertexArray[(targetWall.vertexIndex + 1) % n];
-                const v1World = localToWorld(v1Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
-                const v2World = localToWorld(v2Local, selectedRoom.position, selectedRoom.rotation, selectedRoom.scale);
+                const v1World = localToWorld(v1Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
+                const v2World = localToWorld(v2Local, targetRoom.position, targetRoom.rotation, targetRoom.scale);
                 const wallLengthPx = calculateWallLength(v1World, v2World);
 
                 // Validate aperture position
+                // For cross-room moves, don't exclude the aperture ID
                 const validation = validateAperturePosition({
                   aperture,
                   targetWall,
                   targetDistance: result.newDistance,
                   targetAnchor: result.newAnchor,
                   wallLengthPx,
-                  excludeApertureId: sourceWallIndex === result.targetWallIndex ? apertureId : undefined
+                  excludeApertureId: (sourceRoomId === targetRoomId && sourceWallIndex === result.targetWallIndex) ? apertureId : undefined
                 });
+
+                // Determine which store action to use
+                const isSameRoom = sourceRoomId === targetRoomId;
 
                 if (validation.isValid) {
                   // Move aperture to new position
-                  console.log(`✅ Moving aperture ${apertureId} from wall ${sourceWallIndex} to wall ${result.targetWallIndex}`);
-                  moveAperture(
-                    sourceRoomId,
-                    sourceWallIndex,
-                    result.targetWallIndex,
-                    apertureId,
-                    result.newDistance,
-                    result.newAnchor
-                  );
+                  if (isSameRoom) {
+                    console.log(`✅ Moving aperture ${apertureId} within room ${sourceRoomId} from wall ${sourceWallIndex} to wall ${result.targetWallIndex}`);
+                    moveAperture(
+                      sourceRoomId,
+                      sourceWallIndex,
+                      result.targetWallIndex,
+                      apertureId,
+                      result.newDistance,
+                      result.newAnchor
+                    );
+                  } else {
+                    console.log(`✅ Moving aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${result.targetWallIndex}`);
+                    moveApertureCrossRoom(
+                      sourceRoomId,
+                      sourceWallIndex,
+                      targetRoomId,
+                      result.targetWallIndex,
+                      apertureId,
+                      result.newDistance,
+                      result.newAnchor
+                    );
+                  }
                 } else if (validation.reason === 'collision' && validation.suggestedPosition) {
                   // Use suggested position
                   console.log(`⚠️ Collision detected, using suggested position`);
-                  moveAperture(
-                    sourceRoomId,
-                    sourceWallIndex,
-                    result.targetWallIndex,
-                    apertureId,
-                    validation.suggestedPosition.distance,
-                    validation.suggestedPosition.anchor
-                  );
+                  if (isSameRoom) {
+                    moveAperture(
+                      sourceRoomId,
+                      sourceWallIndex,
+                      result.targetWallIndex,
+                      apertureId,
+                      validation.suggestedPosition.distance,
+                      validation.suggestedPosition.anchor
+                    );
+                  } else {
+                    moveApertureCrossRoom(
+                      sourceRoomId,
+                      sourceWallIndex,
+                      targetRoomId,
+                      result.targetWallIndex,
+                      apertureId,
+                      validation.suggestedPosition.distance,
+                      validation.suggestedPosition.anchor
+                    );
+                  }
                 } else {
                   // Invalid position - revert (do nothing, aperture stays in place)
                   console.warn(`❌ Cannot place aperture: ${validation.reason}`);
@@ -1377,7 +1666,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
           const newWalls = generateWalls(
             selectedRoom.vertices,
             selectedRoom.wallThickness,
-            selectedRoom.walls  // Pass existing walls to preserve properties
+            selectedRoom.walls,  // Pass existing walls to preserve properties
+            selectedRoom.vertices  // Pass oldVertices to enable wall matching and preserve apertures
           );
 
           // Update room with regenerated walls
@@ -1451,7 +1741,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
         }
       }
     }
-  }, [spacePressed, viewport, editorMode, selectionRectangle, rooms, selection, getSelectedRoom, getFirstSelectedRoomId, updateRoom, clearVertexSelection, clearEdgeSelection, clearWallSelection, selectRooms, clearAllSelection, stopPanning, recalculateAllEnvelopes]);
+  }, [spacePressed, viewport, editorMode, selectionRectangle, rooms, selection, getSelectedRoom, getFirstSelectedRoomId, updateRoom, clearVertexSelection, clearEdgeSelection, clearWallSelection, selectRooms, clearAllSelection, stopPanning, recalculateAllEnvelopes, apertureClipboard, pasteAperture, showVisualFeedback, clearLongPressTimer]);
 
   /**
    * Setup wheel zoom with passive: false
@@ -1517,6 +1807,42 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false, constrai
             onCancel={handleDimensionCancel}
           />
         </>
+      )}
+
+      {/* Visual feedback overlay for copy/paste operations */}
+      {visualFeedback && visualFeedback.show && (
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            left: visualFeedback.position.x,
+            top: visualFeedback.position.y,
+            transform: 'translate(-50%, -50%)',
+            zIndex: 1000
+          }}
+        >
+          <div
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-bounce"
+            style={{
+              animation: 'fadeInOut 1.5s ease-in-out'
+            }}
+          >
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+              />
+            </svg>
+            <span className="font-medium">{visualFeedback.message}</span>
+          </div>
+        </div>
       )}
     </>
   );

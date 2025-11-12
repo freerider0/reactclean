@@ -271,6 +271,63 @@ export const createRoomsSlice: StateCreator<
   },
 
   /**
+   * Move an aperture from one room's wall to another room's wall (cross-room)
+   */
+  moveApertureCrossRoom: (sourceRoomId, sourceWallIndex, targetRoomId, targetWallIndex, apertureId, newDistance, newAnchor) => {
+    set((state) => {
+      const sourceRoom = state.rooms.get(sourceRoomId);
+      const targetRoom = state.rooms.get(targetRoomId);
+
+      if (!sourceRoom || !targetRoom) {
+        console.warn(`Source room ${sourceRoomId} or target room ${targetRoomId} not found`);
+        return;
+      }
+
+      const sourceWall = sourceRoom.walls[sourceWallIndex];
+      if (!sourceWall || !sourceWall.apertures) {
+        console.warn(`Source wall ${sourceWallIndex} not found or has no apertures`);
+        return;
+      }
+
+      const apertureIndex = sourceWall.apertures.findIndex(a => a.id === apertureId);
+      if (apertureIndex === -1) {
+        console.warn(`Aperture ${apertureId} not found on source wall ${sourceWallIndex}`);
+        return;
+      }
+
+      // Get the aperture to move
+      const aperture = { ...sourceWall.apertures[apertureIndex] };
+
+      // Remove from source wall
+      sourceWall.apertures = sourceWall.apertures.filter(a => a.id !== apertureId);
+
+      // Update position
+      aperture.distance = newDistance;
+      aperture.anchorVertex = newAnchor;
+
+      // Add to target wall in target room
+      const targetWall = targetRoom.walls[targetWallIndex];
+      if (!targetWall) {
+        console.warn(`Target wall ${targetWallIndex} not found`);
+        // Restore aperture to source wall
+        sourceWall.apertures.push(aperture);
+        return;
+      }
+
+      if (!targetWall.apertures) {
+        targetWall.apertures = [];
+      }
+
+      targetWall.apertures.push(aperture);
+
+      console.log(`✅ Moved aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${targetWallIndex}`);
+    });
+
+    // Push to history
+    get().pushHistory(`Moved aperture between rooms`);
+  },
+
+  /**
    * Delete an aperture (door or window) from a wall
    */
   deleteAperture: (roomId, wallIndex, apertureId) => {
