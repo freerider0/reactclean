@@ -5,7 +5,7 @@
 
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
-import { EditorMode, ToolMode, Vertex, SelectionRectangleState, Room } from '../types';
+import { EditorMode, ToolMode, Vertex, SelectionRectangleState, Room, ConstraintType } from '../types';
 import { screenToWorld, worldToScreen, localToWorld, worldToLocal } from '../utils/coordinates';
 import {
   clearCanvas,
@@ -39,7 +39,7 @@ import {
 } from '../utils/hitTesting';
 import { polygonIntersectsRectangle, pointInPolygon, distance } from '../utils/geometry';
 import { snapWithPriority } from '../utils/snapping';
-import { generateWalls } from '../utils/walls';
+import { createVertex } from '../utils/vertexUtils';
 import { useFloorplanStore, selectAllRooms } from '../store/floorplanStore';
 import { useEditableDimensions } from '../hooks/useEditableDimensions';
 import { createDistanceConstraint } from '../utils/constraints';
@@ -953,8 +953,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           );
           const firstVertex = snapResult.position || worldPoint;
           startDrawing();
-          addDrawingVertex(firstVertex);
-          setSnapPosition(firstVertex);
+          // Create vertex with UUID to ensure ID is assigned from the start
+          const vertexWithId = createVertex(firstVertex.x, firstVertex.y);
+          addDrawingVertex(vertexWithId);
+          setSnapPosition(vertexWithId);
         } else {
           // Check if we're close to the first vertex (for closing)
           if (drawing.vertices.length >= MIN_VERTICES) {
@@ -992,9 +994,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           );
           const snapPos = snapResult.position || worldPoint;
 
-          // Add the snapped vertex
+          // Add the snapped vertex with UUID
           console.log('➕ Adding vertex at:', snapPos);
-          addDrawingVertex(snapPos);
+          const vertexWithId = createVertex(snapPos.x, snapPos.y);
+          addDrawingVertex(vertexWithId);
         }
         return;
       }
@@ -1905,30 +1908,16 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     // End assembly mode dragging or rotation
     if (editorMode === EditorMode.Assembly && assemblyDragState.current.dragType !== null) {
       if (assemblyDragState.current.dragType === 'rotation') {
-        // Regenerate walls after rotation
+        // No need to regenerate walls - rotation doesn't change vertex IDs or local coordinates
         const selectedRoomId = getFirstSelectedRoomId();
-        const selectedRoom = getSelectedRoom();
 
-        if (selectedRoomId && selectedRoom) {
-          console.log('🔄 Regenerating walls after rotation...');
-
-          // Regenerate walls with current rotation-affected geometry
-          const newWalls = generateWalls(
-            selectedRoom.vertices,
-            selectedRoom.wallThickness,
-            selectedRoom.walls,  // Pass existing walls to preserve properties
-            selectedRoom.vertices  // Pass oldVertices to enable wall matching and preserve apertures
-          );
-
-          // Update room with regenerated walls
-          updateRoom(selectedRoomId, { walls: newWalls });
+        if (selectedRoomId) {
+          console.log('✅ Rotation complete - walls preserved (vertex IDs stable)');
 
           // Recalculate envelopes
           if (recalculateAllEnvelopes) {
             setTimeout(async () => await recalculateAllEnvelopes(), 0);
           }
-
-          console.log('✅ Walls regenerated after rotation');
         }
 
         // Clear the drag state for rotation
@@ -1958,17 +1947,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           if (finalSnap && finalSnap.snapped) {
             const updates: Partial<Room> = { position: finalSnap.position };
 
-            // If rotation changed, regenerate walls
+            // If rotation changed, just update rotation - walls stay valid (vertex IDs stable)
             if (finalSnap.rotation !== undefined) {
               updates.rotation = finalSnap.rotation;
-
-              console.log('🔄 Regenerating walls after room snap with rotation...');
-              const newWalls = generateWalls(
-                selectedRoom.vertices,
-                selectedRoom.wallThickness,
-                selectedRoom.walls
-              );
-              updates.walls = newWalls;
+              console.log('✅ Room snap with rotation - walls preserved (vertex IDs stable)');
             }
 
             updateRoom(selectedRoomId, updates);

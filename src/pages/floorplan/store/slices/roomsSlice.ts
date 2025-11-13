@@ -7,7 +7,6 @@ import type { FloorplanStore, RoomsSlice } from '../types/store';
 import type { Room, Constraint, ConstraintType } from '../../types';
 import { calculateFloorplanEnvelopes } from '../../utils/geometry';
 import { calculateCenterline } from '../../utils/roomJoining';
-import { generateWalls } from '../../utils/walls';
 import { solveRoom, calculateDOF, isOverConstrained } from '../../utils/constraintSolver';
 
 export const createRoomsSlice: StateCreator<
@@ -401,17 +400,13 @@ export const createRoomsSlice: StateCreator<
           const currentRoom = state.rooms.get(roomId);
           if (!currentRoom) return;
 
-          const finalRoom = {
-            ...currentRoom,
-            vertices: solvedRoom.vertices,
-            originalVertices: solvedRoom.vertices.map(v => ({ ...v })), // Update original vertices after solve
-            walls: solvedRoom.walls,
-            constraints: solvedRoom.constraints,
-            primitives: solvedRoom.primitives,
-            centerlineVertices: calculateCenterline(solvedRoom)
-          };
-
-          state.rooms.set(roomId, finalRoom);
+          // Use Immer direct mutations - walls stay unchanged since vertex IDs are stable!
+          currentRoom.vertices = solvedRoom.vertices;
+          currentRoom.originalVertices = solvedRoom.vertices.map(v => ({ ...v })); // Update original vertices after solve
+          // walls stay unchanged - vertex IDs remain stable during constraint solving
+          currentRoom.constraints = solvedRoom.constraints;
+          currentRoom.primitives = solvedRoom.primitives;
+          currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
         });
 
         // Recalculate envelopes after constraint solving
@@ -485,16 +480,12 @@ export const createRoomsSlice: StateCreator<
         const currentRoom = state.rooms.get(roomId);
         if (!currentRoom) return;
 
-        const finalRoom = {
-          ...currentRoom,
-          vertices: solvedRoom.vertices,
-          walls: solvedRoom.walls,
-          constraints: solvedRoom.constraints,
-          primitives: solvedRoom.primitives,
-          centerlineVertices: calculateCenterline(solvedRoom)
-        };
-
-        state.rooms.set(roomId, finalRoom);
+        // Use Immer direct mutations - walls stay unchanged since vertex IDs are stable!
+        currentRoom.vertices = solvedRoom.vertices;
+        // walls stay unchanged - vertex IDs remain stable during constraint solving
+        currentRoom.constraints = solvedRoom.constraints;
+        currentRoom.primitives = solvedRoom.primitives;
+        currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
       });
 
       // Recalculate envelopes after constraint solving
@@ -531,17 +522,13 @@ export const createRoomsSlice: StateCreator<
         const currentRoom = state.rooms.get(roomId);
         if (!currentRoom) return;
 
-        const finalRoom = {
-          ...currentRoom,
-          vertices: solvedRoom.vertices,
-          originalVertices: solvedRoom.vertices.map(v => ({ ...v })), // Update original vertices after solve
-          walls: solvedRoom.walls,
-          constraints: solvedRoom.constraints,
-          primitives: solvedRoom.primitives,
-          centerlineVertices: calculateCenterline(solvedRoom)
-        };
-
-        state.rooms.set(roomId, finalRoom);
+        // Use Immer direct mutations - walls stay unchanged since vertex IDs are stable!
+        currentRoom.vertices = solvedRoom.vertices;
+        currentRoom.originalVertices = solvedRoom.vertices.map(v => ({ ...v })); // Update original vertices after solve
+        // walls stay unchanged - vertex IDs remain stable during constraint solving
+        currentRoom.constraints = solvedRoom.constraints;
+        currentRoom.primitives = solvedRoom.primitives;
+        currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
       });
 
       // Recalculate envelopes after constraint solving
@@ -643,56 +630,34 @@ export const createRoomsSlice: StateCreator<
         console.log(`✨ Room ${room.id}: envelope updated`);
         console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
         console.log(`  → room.vertices: ${freshRoom.vertices.length}, centerlineVertices: ${freshRoom.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
-        console.log(`  → Using ${result.walls.length} walls from envelope (already classified)`);
-        console.log(`  → Wall types:`, result.walls.map(w => w.wallType).join(', '));
+        console.log(`  → Keeping existing ${freshRoom.walls.length} walls (tied to room.vertices, not envelope)`);
 
-        // Start with envelope data - use FRESH room data
-        let updatedRoom: Room = {
-          ...freshRoom,
-          envelopeVertices: result.envelope,
-          innerBoundaryVertices: result.innerBoundary,
-          debugMergedCenterline: result.debugCenterline,
-          debugContractedEnvelope: result.debugContracted,
-          walls: result.walls
-        };
+        // Use Immer direct mutation - simpler and clearer!
+        // Envelope is ONLY for UI rendering - NEVER touches walls or vertices
+        freshRoom.envelopeVertices = result.envelope;
+        freshRoom.innerBoundaryVertices = result.innerBoundary;
+        freshRoom.debugMergedCenterline = result.debugCenterline;
+        freshRoom.debugContractedEnvelope = result.debugContracted;
 
-        // Check if vertices were updated by collinear vertex insertion
+        // Store assembly vertices if provided (collinear points for envelope calculation only)
         if (result.updatedVertices) {
-          // New vertices were inserted from merge
-          console.log(`  ⭐ Vertices updated: ${freshRoom.vertices.length} → ${result.updatedVertices.length}`);
-          updatedRoom = {
-            ...updatedRoom,
-            vertices: result.updatedVertices,
-            originalVertices: freshRoom.originalVertices || [...freshRoom.vertices], // Preserve or initialize original vertices
-            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: result.updatedVertices }),
-            walls: generateWalls(
-              result.updatedVertices,
-              freshRoom.wallThickness,
-              freshRoom.walls,
-              freshRoom.vertices // Pass original vertices for matching
-            ),
-            constraints: freshRoom.constraints, // Preserve constraints
-            primitives: freshRoom.primitives     // Preserve primitives
-          };
-        } else if (freshRoom.originalVertices && freshRoom.vertices.length > freshRoom.originalVertices.length) {
-          // No new vertices from merge, but room has auto-inserted vertices that should be removed
-          console.log(`  🔄 ${freshRoom.id}: Resetting to original vertices (${freshRoom.vertices.length} → ${freshRoom.originalVertices.length})`);
-          updatedRoom = {
-            ...updatedRoom,
-            vertices: [...freshRoom.originalVertices],
-            centerlineVertices: calculateCenterline({ ...updatedRoom, vertices: freshRoom.originalVertices }),
-            walls: generateWalls(
-              freshRoom.originalVertices,
-              freshRoom.wallThickness,
-              freshRoom.walls,
-              freshRoom.vertices // Pass current vertices for matching
-            ),
-            constraints: freshRoom.constraints, // Preserve constraints
-            primitives: freshRoom.primitives     // Preserve primitives
-          };
-        }
+          console.log(`  ⭐ Assembly vertices: ${freshRoom.vertices.length} → ${result.updatedVertices.length} (collinear points inserted for envelope)`);
+          freshRoom.assemblyVertices = result.updatedVertices;
 
-        state.rooms.set(room.id, updatedRoom);
+          // Recalculate centerline using the new assembly vertices (with reference points)
+          // This ensures the pink centerline and subsequent envelope calculations use the collinear points
+          freshRoom.centerlineVertices = calculateCenterline(freshRoom);
+          console.log(`  ↻ Recalculated centerline: ${freshRoom.centerlineVertices.length} vertices (using assembly vertices with reference points)`);
+
+          // NEVER modify freshRoom.vertices or freshRoom.walls during envelope update!
+        } else if (freshRoom.assemblyVertices) {
+          // Clear assembly vertices if no longer needed
+          freshRoom.assemblyVertices = undefined;
+
+          // Recalculate centerline using geometry vertices only
+          freshRoom.centerlineVertices = calculateCenterline(freshRoom);
+          console.log(`  ↻ Recalculated centerline: ${freshRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
+        }
       });
 
       state.isCalculatingEnvelopes = false;

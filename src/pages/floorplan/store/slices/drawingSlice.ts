@@ -8,6 +8,7 @@ import type { Vertex } from '../../types';
 import { isSelfIntersecting, isCounterClockwise, centerVertices } from '../../utils/geometry';
 import { generateWalls } from '../../utils/walls';
 import { calculateCenterline } from '../../utils/roomJoining';
+import { createVertex, migrateVerticesToIds } from '../../utils/vertexUtils';
 
 export const createDrawingSlice: StateCreator<
   FloorplanStore,
@@ -100,8 +101,12 @@ export const createDrawingSlice: StateCreator<
 
     console.log('✅ Polygon validation passed, creating room...');
 
+    // Ensure all vertices have IDs (safety net for backwards compatibility)
+    // Note: As of UUID upgrade, vertices should already have IDs from drawing phase
+    const verticesWithIds = migrateVerticesToIds(vertices);
+
     // Ensure counter-clockwise winding
-    let processedVertices = [...vertices];
+    let processedVertices = [...verticesWithIds];
     if (!isCounterClockwise(processedVertices)) {
       processedVertices = processedVertices.reverse();
     }

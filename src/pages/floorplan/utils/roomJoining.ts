@@ -55,19 +55,25 @@ export interface RoomSnapResult {
  * Calculate wall centerline for a room using polygon offsetting
  * Returns vertices offset OUTWARD by half the wall thickness
  * (floor polygon is inner boundary, centerline is outside it)
+ *
+ * Uses assemblyVertices (with collinear reference points) if available,
+ * otherwise falls back to geometry vertices
  */
 export function calculateCenterline(room: Room): Vertex[] {
   const halfThickness = room.wallThickness / 2;
-  const n = room.vertices.length;
 
-  if (n < 3) return room.vertices;
+  // Use assemblyVertices (with reference points) if available, otherwise use geometry vertices
+  const vertices = room.assemblyVertices || room.vertices;
+  const n = vertices.length;
+
+  if (n < 3) return vertices;
 
   // Create offset lines for each edge
   const offsetLines: { start: Vertex; end: Vertex }[] = [];
 
   for (let i = 0; i < n; i++) {
-    const p1 = room.vertices[i];
-    const p2 = room.vertices[(i + 1) % n];
+    const p1 = vertices[i];
+    const p2 = vertices[(i + 1) % n];
 
     // Edge vector
     const dx = p2.x - p1.x;

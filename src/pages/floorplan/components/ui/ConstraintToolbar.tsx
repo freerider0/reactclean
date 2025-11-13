@@ -85,7 +85,7 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   const handleAddHorizontal = () => {
     if (!canAddSingleEdgeConstraint) return;
     const [v1, v2] = getEdgeVertices(selectedWalls[0]);
-    const constraint = createHorizontalConstraint(v1, v2);
+    const constraint = createHorizontalConstraint(room, v1, v2);
     addConstraint(room.id, constraint, true);
   };
 
@@ -95,7 +95,7 @@ export const ConstraintToolbar: React.FC<ConstraintToolbarProps> = ({
   const handleAddVertical = () => {
     if (!canAddSingleEdgeConstraint) return;
     const [v1, v2] = getEdgeVertices(selectedWalls[0]);
-    const constraint = createVerticalConstraint(v1, v2);
+    const constraint = createVerticalConstraint(room, v1, v2);
     addConstraint(room.id, constraint, true);
   };
 

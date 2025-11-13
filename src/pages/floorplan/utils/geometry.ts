@@ -3,7 +3,7 @@
  */
 
 import { Vertex, Room, Wall } from '../types';
-import { getWallQuad, generateWallsFromEnvelope } from './walls';
+import { getWallQuad } from './walls';
 import { findLineSegmentOverlap, splitEdgeAtOverlaps, insertSplitPoints } from './edgeSplitting';
 import { localToWorld, worldToLocal } from './coordinates';
 import {
@@ -227,6 +227,7 @@ export function centerVertices(vertices: Vertex[]): { centeredVertices: Vertex[]
   const centroid = polygonCentroid(vertices);
 
   const centeredVertices = vertices.map(v => ({
+    ...v,  // Preserve all properties including id
     x: v.x - centroid.x,
     y: v.y - centroid.y
   }));
@@ -247,6 +248,7 @@ export function recenterVertices(vertices: Vertex[]): { centeredVertices: Vertex
   const centroid = polygonCentroid(vertices);
 
   const centeredVertices = vertices.map(v => ({
+    ...v,  // Preserve all properties including id
     x: v.x - centroid.x,
     y: v.y - centroid.y
   }));
@@ -765,15 +767,17 @@ function insertCollinearVerticesFromPolygon(
 /**
  * Calculate envelope polygons for all rooms using Clipper (WebAssembly)
  * Connected rooms will merge into one envelope, disconnected rooms get separate envelopes
- * Returns a Map of room ID to their envelope vertices (in local coordinates) AND walls generated from envelope
+ * Returns a Map of room ID to their envelope vertices (in local coordinates)
+ *
+ * IMPORTANT: Envelope is ONLY for UI rendering. Walls stay tied to room.vertices, NOT envelope.
  */
 export async function calculateFloorplanEnvelopes(
   rooms: Room[],
   miterLimit: number = 2.0,
   interiorWallThickness: number = 15,
   exteriorWallThickness: number = 30
-): Promise<Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; walls: Wall[]; updatedVertices?: Vertex[] }>> {
-  const envelopeMap = new Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; walls: Wall[]; updatedVertices?: Vertex[] }>();
+): Promise<Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; updatedVertices?: Vertex[] }>> {
+  const envelopeMap = new Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; updatedVertices?: Vertex[] }>();
 
   if (rooms.length === 0) {
     return envelopeMap;
@@ -967,13 +971,14 @@ export async function calculateFloorplanEnvelopes(
         // Check if any vertices from the green polygon should be inserted into room vertices
         const updatedVertices = insertCollinearVerticesFromPolygon(room, contractedEnvelopeWorld);
 
-        // Don't generate envelope walls - just store the polygons
+        // Envelope is ONLY for UI rendering - NEVER generate walls from it!
+        // Walls stay tied to room.vertices (geometry), not envelope
+
         envelopeMap.set(room.id, {
           envelope: envelopeVerticesLocal,
           innerBoundary: innerBoundaryLocal,
           debugCenterline: debugCenterlineLocal,
           debugContracted: debugContractedLocal,
-          walls: room.walls, // Keep original room walls unchanged
           updatedVertices: updatedVertices || undefined // Include updated vertices if any
         });
       }
@@ -1013,13 +1018,14 @@ export async function calculateFloorplanEnvelopes(
       // A room's own green polygon checking against its own edges doesn't make sense.
       // updatedVertices should remain undefined so the reset logic in useFloorplan.ts triggers.
 
-      // Don't generate envelope walls - just store the polygons
+      // Envelope is ONLY for UI rendering - NEVER generate walls from it!
+      // Walls stay tied to room.vertices (geometry), not envelope
+
       envelopeMap.set(room.id, {
         envelope: inflatedEnvelope,
         innerBoundary: innerBoundary,
         debugCenterline: cleanedCenterline,
-        debugContracted: contractedEnvelope,
-        walls: room.walls // Keep original room walls unchanged
+        debugContracted: contractedEnvelope
         // updatedVertices is intentionally omitted - no vertex insertion for separated rooms
       });
     }

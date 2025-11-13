@@ -13,6 +13,7 @@ export type { GeoReference, InitialGeoReference } from './geo';
 // ============================================================================
 
 export interface Vertex {
+  id: string;
   x: number;
   y: number;
 }
@@ -78,6 +79,8 @@ export interface Aperture {
 
 export interface Wall {
   vertexIndex: number;  // Start vertex index (end is vertexIndex + 1)
+  startVertexId?: string;  // Stable ID for start vertex (preferred over vertexIndex)
+  endVertexId?: string;    // Stable ID for end vertex (preferred over vertexIndex)
   thickness: number;
   wallType?: WallType;  // Type of wall (affects thermal properties)
   height?: number;      // Wall height in meters (default 2.7m)
@@ -94,12 +97,13 @@ export interface Room {
   name: string;
 
   // Geometry (local coordinates)
-  vertices: Vertex[];  // Inner floor boundary
+  vertices: Vertex[];  // Inner floor boundary - SOURCE OF TRUTH with UUIDs
   originalVertices?: Vertex[];  // Original vertices before auto-insertion from merging (for reset on re-merge)
+  assemblyVertices?: Vertex[];  // Vertices with collinear points inserted for envelope calculation (assembly only, not geometry)
   centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness) - PINK LINE
   innerBoundaryVertices?: Vertex[];  // Inner boundary of exterior walls (centerline + interior wall thickness) - YELLOW LINE
-  walls: Wall[];
-  envelopeVertices?: Vertex[];  // Outer boundary from polygon merging (inflated)
+  walls: Wall[];  // Wall metadata for each edge - tied to vertices, never to envelope
+  envelopeVertices?: Vertex[];  // Outer boundary from polygon merging (inflated) - UI ONLY
   debugMergedCenterline?: Vertex[];  // DEBUG: Merged centerline before inflation
   debugContractedEnvelope?: Vertex[];  // DEBUG: Envelope contracted back to room perimeter
 
@@ -137,7 +141,8 @@ export enum ConstraintType {
 export interface Constraint {
   id: string;
   type: ConstraintType;
-  indices: number[];  // Vertex or edge indices involved
+  indices: number[];  // Vertex or edge indices involved (deprecated, use vertexIds)
+  vertexIds?: string[];  // Vertex IDs involved (preferred over indices)
   value?: number;      // Target value (distance in cm, angle in radians)
   enabled: boolean;
 }

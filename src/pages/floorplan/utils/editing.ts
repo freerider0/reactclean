@@ -9,6 +9,8 @@ import { recenterVertices, distanceToSegment } from './geometry';
 import { localToWorld, worldToLocal } from './coordinates';
 import { generateWalls } from './walls';
 import { solveRoom } from './constraintSolver';
+import { createVertex } from './vertexUtils';
+import { removeConstraintsForEdge } from './constraints';
 
 export const DRAG_THRESHOLD = 5; // pixels before starting drag
 
@@ -91,9 +93,12 @@ export async function calculateVertexDrag(params: {
     dragState.originalScale
   );
 
-  // Update vertex
+  // Update vertex (preserve ID)
   const newVertices = [...dragState.originalVertices];
-  newVertices[vertexIndex] = localPoint;
+  newVertices[vertexIndex] = {
+    ...localPoint,
+    id: dragState.originalVertices[vertexIndex].id  // Preserve vertex ID
+  };
 
   // Recenter vertices to maintain rotation around centroid
   const { centeredVertices, localOffset } = recenterVertices(newVertices);
@@ -113,12 +118,20 @@ export async function calculateVertexDrag(params: {
   };
 
   // Regenerate walls (preserve existing wall properties by matching vertex positions)
+  console.log('🔧 calculateVertexDrag - Regenerating walls');
+  console.log('   New vertices IDs:', centeredVertices.map(v => v.id));
+  console.log('   Original vertices IDs:', dragState.originalVertices.map(v => v.id));
+  console.log('   Existing walls vertex IDs:', room.walls.map(w => `${w.startVertexId} → ${w.endVertexId}`));
+  console.log('   Existing walls apertures:', room.walls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
+
   const newWalls = generateWalls(
     centeredVertices,
     room.wallThickness,
     room.walls,
     dragState.originalVertices // Pass original vertices for matching
   );
+
+  console.log('   Generated walls apertures:', newWalls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
 
   // Check if we need to auto-solve constraints in real-time
   const hasEnabledConstraints = room.constraints && room.constraints.some(c => c.enabled);
@@ -216,10 +229,16 @@ export function calculateEdgeDrag(params: {
   const newV1Local = worldToLocal(newV1World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
   const newV2Local = worldToLocal(newV2World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
 
-  // Update vertices
+  // Update vertices (preserve IDs)
   const newVertices = [...dragState.originalVertices];
-  newVertices[v1Index] = newV1Local;
-  newVertices[v2Index] = newV2Local;
+  newVertices[v1Index] = {
+    ...newV1Local,
+    id: dragState.originalVertices[v1Index].id  // Preserve vertex ID
+  };
+  newVertices[v2Index] = {
+    ...newV2Local,
+    id: dragState.originalVertices[v2Index].id  // Preserve vertex ID
+  };
 
   // Recenter vertices to maintain rotation around centroid
   const { centeredVertices, localOffset } = recenterVertices(newVertices);
@@ -310,10 +329,16 @@ export function calculateWallDrag(params: {
   const newV1Local = worldToLocal(newV1World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
   const newV2Local = worldToLocal(newV2World, dragState.originalPosition, dragState.originalRotation, dragState.originalScale);
 
-  // Update vertices
+  // Update vertices (preserve IDs)
   const newVertices = [...dragState.originalVertices];
-  newVertices[v1Index] = newV1Local;
-  newVertices[v2Index] = newV2Local;
+  newVertices[v1Index] = {
+    ...newV1Local,
+    id: dragState.originalVertices[v1Index].id  // Preserve vertex ID
+  };
+  newVertices[v2Index] = {
+    ...newV2Local,
+    id: dragState.originalVertices[v2Index].id  // Preserve vertex ID
+  };
 
   // Recenter vertices to maintain rotation around centroid
   const { centeredVertices, localOffset } = recenterVertices(newVertices);
@@ -372,9 +397,12 @@ export function calculateAddVertexToEdge(params: {
   // Project the point onto the edge to get the exact position on the line
   const { closestPoint: projectedPoint } = distanceToSegment(localPoint, v1, v2);
 
-  // Insert vertex after edgeIndex using the projected point
+  // Create new vertex with unique ID
+  const newVertex = createVertex(projectedPoint.x, projectedPoint.y);
+
+  // Insert vertex after edgeIndex
   const newVertices = [...room.vertices];
-  newVertices.splice(edgeIndex + 1, 0, projectedPoint);
+  newVertices.splice(edgeIndex + 1, 0, newVertex);
 
   // Don't recenter - just add the vertex to the existing shape
   // Recentering causes unwanted displacement when adding vertices
@@ -387,10 +415,14 @@ export function calculateAddVertexToEdge(params: {
     room.vertices // Pass original vertices for matching
   );
 
+  // Remove constraints that reference the edge being split
+  const filteredConstraints = removeConstraintsForEdge(room.constraints, edgeIndex, room.vertices);
+
   return {
     vertices: newVertices,
     originalVertices: newVertices.map(v => ({ ...v })), // Update original vertices on manual edit
-    walls: newWalls
+    walls: newWalls,
+    constraints: filteredConstraints
   };
 }
 

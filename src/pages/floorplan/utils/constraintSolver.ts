@@ -12,7 +12,7 @@ import {
   Primitive
 } from '../../../lib/geometry/GradientDescentSolver';
 import { Room, Vertex, Constraint, ConstraintType } from '../types';
-import { generateWalls } from './walls';
+import { findVertexIndexById, vertexIdsToIndices } from './vertexUtils';
 
 /**
  * Convert Room to solver primitives (points, lines, constraints)
@@ -24,11 +24,11 @@ import { generateWalls } from './walls';
 export function roomToPrimitives(room: Room, fixedVertexIndex: number = 0): Primitive[] {
   const primitives: Primitive[] = [];
 
-  // Convert vertices to PointPrimitives
+  // Convert vertices to PointPrimitives using vertex IDs
   // Fix the specified vertex (or first vertex by default) to prevent drift
   room.vertices.forEach((vertex, index) => {
     const pointPrimitive: PointPrimitive = {
-      id: `p${index}`,
+      id: vertex.id,  // NEW: Use vertex ID instead of index
       type: 'point',
       x: vertex.x,
       y: vertex.y,
@@ -37,14 +37,15 @@ export function roomToPrimitives(room: Room, fixedVertexIndex: number = 0): Prim
     primitives.push(pointPrimitive);
   });
 
-  // Convert edges to LinePrimitives
-  room.vertices.forEach((_, index) => {
+  // Convert edges to LinePrimitives using vertex IDs
+  room.vertices.forEach((vertex, index) => {
     const nextIndex = (index + 1) % room.vertices.length;
+    const nextVertex = room.vertices[nextIndex];
     const linePrimitive: LinePrimitive = {
-      id: `line${index}`,
+      id: `line${index}`,  // Keep line ID as index-based for now
       type: 'line',
-      p1_id: `p${index}`,
-      p2_id: `p${nextIndex}`
+      p1_id: vertex.id,      // NEW: Use vertex ID
+      p2_id: nextVertex.id   // NEW: Use vertex ID
     };
     primitives.push(linePrimitive);
   });
@@ -53,7 +54,7 @@ export function roomToPrimitives(room: Room, fixedVertexIndex: number = 0): Prim
   room.constraints.forEach((constraint) => {
     if (!constraint.enabled) return;
 
-    const constraintPrimitive = constraintToSolverPrimitive(constraint);
+    const constraintPrimitive = constraintToSolverPrimitive(constraint, room.vertices);
     if (constraintPrimitive) {
       primitives.push(constraintPrimitive);
     }
@@ -64,45 +65,85 @@ export function roomToPrimitives(room: Room, fixedVertexIndex: number = 0): Prim
 
 /**
  * Convert a single Constraint to solver ConstraintPrimitive
+ * Uses vertex IDs for stable references across vertex add/delete operations
  */
-function constraintToSolverPrimitive(constraint: Constraint): ConstraintPrimitive | null {
-  const { id, type, indices, value } = constraint;
+function constraintToSolverPrimitive(constraint: Constraint, vertices: Vertex[]): ConstraintPrimitive | null {
+  const { id, type, indices, vertexIds, value } = constraint;
 
   switch (type) {
     case ConstraintType.Distance:
       // Distance between two vertices
-      if (indices.length !== 2) return null;
+      // Prefer vertexIds if available, fall back to indices
+      let v1Id: string, v2Id: string;
+
+      if (vertexIds && vertexIds.length === 2) {
+        // Use vertex IDs directly
+        v1Id = vertexIds[0];
+        v2Id = vertexIds[1];
+      } else if (indices.length === 2) {
+        // Fall back to indices (backwards compatibility)
+        v1Id = vertices[indices[0]]?.id;
+        v2Id = vertices[indices[1]]?.id;
+        if (!v1Id || !v2Id) return null;
+      } else {
+        return null;
+      }
+
       return {
         id,
         type: 'distance',
-        p1_id: `p${indices[0]}`,
-        p2_id: `p${indices[1]}`,
+        p1_id: v1Id,
+        p2_id: v2Id,
         distance: value ?? 100  // Default 100cm if no value
       };
 
     case ConstraintType.Horizontal:
       // Line between two vertices should be horizontal
-      if (indices.length !== 2) return null;
+      let h1Id: string, h2Id: string;
+
+      if (vertexIds && vertexIds.length === 2) {
+        h1Id = vertexIds[0];
+        h2Id = vertexIds[1];
+      } else if (indices.length === 2) {
+        h1Id = vertices[indices[0]]?.id;
+        h2Id = vertices[indices[1]]?.id;
+        if (!h1Id || !h2Id) return null;
+      } else {
+        return null;
+      }
+
       return {
         id,
         type: 'horizontal',
-        p1_id: `p${indices[0]}`,
-        p2_id: `p${indices[1]}`
+        p1_id: h1Id,
+        p2_id: h2Id
       };
 
     case ConstraintType.Vertical:
       // Line between two vertices should be vertical
-      if (indices.length !== 2) return null;
+      let vert1Id: string, vert2Id: string;
+
+      if (vertexIds && vertexIds.length === 2) {
+        vert1Id = vertexIds[0];
+        vert2Id = vertexIds[1];
+      } else if (indices.length === 2) {
+        vert1Id = vertices[indices[0]]?.id;
+        vert2Id = vertices[indices[1]]?.id;
+        if (!vert1Id || !vert2Id) return null;
+      } else {
+        return null;
+      }
+
       return {
         id,
         type: 'vertical',
-        p1_id: `p${indices[0]}`,
-        p2_id: `p${indices[1]}`
+        p1_id: vert1Id,
+        p2_id: vert2Id
       };
 
     case ConstraintType.Parallel:
-      // Two lines should be parallel (4 vertices)
-      if (indices.length !== 4) return null;
+      // Two lines should be parallel (uses edge indices)
+      if (indices.length !== 2) return null;
       return {
         id,
         type: 'parallel',
@@ -111,8 +152,8 @@ function constraintToSolverPrimitive(constraint: Constraint): ConstraintPrimitiv
       };
 
     case ConstraintType.Perpendicular:
-      // Two lines should be perpendicular (4 vertices)
-      if (indices.length !== 4) return null;
+      // Two lines should be perpendicular (uses edge indices)
+      if (indices.length !== 2) return null;
       return {
         id,
         type: 'perpendicular',
@@ -121,8 +162,8 @@ function constraintToSolverPrimitive(constraint: Constraint): ConstraintPrimitiv
       };
 
     case ConstraintType.Angle:
-      // Angle between two lines (4 vertices)
-      if (indices.length !== 4) return null;
+      // Angle between two lines (uses edge indices)
+      if (indices.length !== 2) return null;
       return {
         id,
         type: 'angle',
@@ -132,7 +173,7 @@ function constraintToSolverPrimitive(constraint: Constraint): ConstraintPrimitiv
       };
 
     case ConstraintType.Equal:
-      // Equal length between two edges
+      // Equal length between two edges (uses edge indices)
       if (indices.length !== 2) return null;
       return {
         id,
@@ -149,35 +190,35 @@ function constraintToSolverPrimitive(constraint: Constraint): ConstraintPrimitiv
 /**
  * Update Room vertices from solved primitives
  * Returns a new Room with updated vertices (pure function)
+ * IMPORTANT: Preserves vertex IDs and order
  */
 export function primitivesToRoom(primitives: Primitive[], room: Room): Room {
-  // Extract point primitives and sort by id
+  // Extract point primitives
   const pointPrimitives = primitives.filter(p => p.type === 'point') as PointPrimitive[];
-  pointPrimitives.sort((a, b) => {
-    const aIndex = parseInt(a.id.substring(1));
-    const bIndex = parseInt(b.id.substring(1));
-    return aIndex - bIndex;
+
+  // Sort by original vertex order (match IDs with original room.vertices)
+  // This preserves the vertex order and ensures indices remain stable
+  const sortedPoints = room.vertices.map(originalVertex => {
+    const solvedPoint = pointPrimitives.find(p => p.id === originalVertex.id);
+    if (!solvedPoint) {
+      // Fallback: vertex not found in solved primitives, keep original
+      return originalVertex;
+    }
+    return {
+      id: originalVertex.id,  // Preserve vertex ID
+      x: solvedPoint.x,
+      y: solvedPoint.y
+    };
   });
 
-  // Create new vertices array from solved points
-  const newVertices: Vertex[] = pointPrimitives.map(p => ({
-    x: p.x,
-    y: p.y
-  }));
-
-  // Regenerate walls with new vertices (preserve wall properties)
-  const newWalls = generateWalls(
-    newVertices,
-    room.wallThickness,
-    room.walls,
-    room.vertices
-  );
+  // With ID-based walls, no need to regenerate!
+  // Vertices moved but IDs stayed the same, so walls are still valid
 
   // Return new room with updated geometry
   return {
     ...room,
-    vertices: newVertices,
-    walls: newWalls,
+    vertices: sortedPoints,
+    // walls stay unchanged - vertex IDs are stable!
     primitives  // Store primitives for next solve
   };
 }

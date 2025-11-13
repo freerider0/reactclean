@@ -277,23 +277,30 @@ export const FloorplanPage: React.FC = () => {
         }
       }
 
-      // Mode switching
-      if (e.code === 'Digit1' || e.code === 'KeyD') {
+      // Mode switching (only letter keys, not numbers)
+      if (e.code === 'KeyD') {
         setEditorMode(EditorMode.Draw);
       }
-      if (e.code === 'Digit2' || e.code === 'KeyE') {
+      if (e.code === 'KeyE') {
         setEditorMode(EditorMode.Edit);
       }
-      if (e.code === 'Digit3' || e.code === 'KeyA') {
+      if (e.code === 'KeyA') {
         setEditorMode(EditorMode.Assembly);
       }
-      if (e.code === 'Digit4' || e.code === 'KeyR') {
+      if (e.code === 'KeyR') {
         setEditorMode(EditorMode.GeoRef);
       }
 
-      // Grid toggle
+      // Grid toggle / GeoRef mode
       if (e.code === 'KeyG') {
-        updateConfig({ enabled: !config.enabled });
+        if (e.ctrlKey || e.metaKey) {
+          // Ctrl+G = GeoRef mode
+          setEditorMode(EditorMode.GeoRef);
+          e.preventDefault();
+        } else {
+          // G = Grid toggle
+          updateConfig({ enabled: !config.enabled });
+        }
       }
 
       // Snap toggle

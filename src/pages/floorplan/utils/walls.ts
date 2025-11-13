@@ -4,7 +4,7 @@
  * ALGORITHM COPIED FROM ORIGINAL WallGenerationService.ts
  */
 
-import { Vertex, Wall, Room, WallType } from '../types';
+import { Vertex, Wall, Room, WallType, Aperture } from '../types';
 
 /**
  * Find intersection point of two lines
@@ -71,6 +71,85 @@ function pointOnSegment(
 }
 
 /**
+ * Filter and adjust apertures for a subsegment of a wall that was split
+ *
+ * @param apertures - Original apertures from the unsplit wall
+ * @param oldV1 - Start vertex of original wall
+ * @param oldV2 - End vertex of original wall
+ * @param newV1 - Start vertex of new wall segment
+ * @param newV2 - End vertex of new wall segment
+ * @returns Filtered and adjusted apertures that belong to this segment
+ */
+function filterAperturesForSegment(
+  apertures: Aperture[] | undefined,
+  oldV1: Vertex,
+  oldV2: Vertex,
+  newV1: Vertex,
+  newV2: Vertex
+): Aperture[] {
+  if (!apertures || apertures.length === 0) {
+    return [];
+  }
+
+  // Calculate old edge length
+  const oldDx = oldV2.x - oldV1.x;
+  const oldDy = oldV2.y - oldV1.y;
+  const oldLength = Math.sqrt(oldDx * oldDx + oldDy * oldDy);
+
+  if (oldLength === 0) return [];
+
+  // Calculate parametric position of new segment on old edge
+  // t = 0 means at oldV1, t = 1 means at oldV2
+  const getParametricPosition = (point: Vertex): number => {
+    const dx = point.x - oldV1.x;
+    const dy = point.y - oldV1.y;
+    const projection = (dx * oldDx + dy * oldDy) / (oldLength * oldLength);
+    return Math.max(0, Math.min(1, projection)); // Clamp to [0, 1]
+  };
+
+  const t_start = getParametricPosition(newV1);
+  const t_end = getParametricPosition(newV2);
+
+  // Calculate absolute positions in meters
+  const abs_start = t_start * oldLength;
+  const abs_end = t_end * oldLength;
+  const newLength = abs_end - abs_start;
+
+  if (newLength <= 0) return [];
+
+  // Filter and adjust apertures
+  const filteredApertures: Aperture[] = [];
+
+  for (const aperture of apertures) {
+    // Calculate aperture's absolute position on old edge (in meters from oldV1)
+    let apertureAbsPos: number;
+    if (aperture.anchorVertex === 'start') {
+      apertureAbsPos = aperture.distance;
+    } else {
+      // anchorVertex === 'end', measure from oldV2
+      apertureAbsPos = oldLength - aperture.distance;
+    }
+
+    // Check if aperture falls within the new segment
+    // Use small tolerance to handle floating point precision
+    const tolerance = 0.001; // 1mm tolerance
+    if (apertureAbsPos >= abs_start - tolerance && apertureAbsPos <= abs_end + tolerance) {
+      // Calculate new distance from start of new segment
+      const newDistance = apertureAbsPos - abs_start;
+
+      // Create adjusted aperture (always measure from start of new segment)
+      filteredApertures.push({
+        ...aperture,
+        anchorVertex: 'start',
+        distance: Math.max(0, newDistance) // Ensure non-negative
+      });
+    }
+  }
+
+  return filteredApertures;
+}
+
+/**
  * Find matching wall from old walls by comparing vertex positions and topology
  * Handles both vertex movement and vertex insertion/deletion
  */
@@ -84,11 +163,41 @@ function findMatchingWall(
 ): Wall | undefined {
   const tolerance = 0.01; // 0.01 cm tolerance for matching vertices
 
+  // Strategy 0 (PREFERRED): Match by stable vertex IDs
+  // This works even when vertices are recentered or positions change
+  if (v1.id && v2.id) {
+    const matchingWall = existingWalls.find(w => {
+      if (!w.startVertexId || !w.endVertexId) return false;
+
+      // Check forward direction
+      const forwardMatch = w.startVertexId === v1.id && w.endVertexId === v2.id;
+      // Check reverse direction (shouldn't happen, but be defensive)
+      const reverseMatch = w.startVertexId === v2.id && w.endVertexId === v1.id;
+
+      return forwardMatch || reverseMatch;
+    });
+
+    if (matchingWall) {
+      console.log(`✅ Wall match found (Strategy 0 - Vertex IDs): wall[${newWallIndex}] matched with vertex IDs ${v1.id} → ${v2.id}`);
+      return matchingWall;
+    } else {
+      // Log when Strategy 0 fails - this is the primary cause of aperture loss
+      console.warn(`⚠️ Wall match failed (Strategy 0): wall[${newWallIndex}] vertices ${v1.id} → ${v2.id} not found in existing walls`);
+      const wallsWithIds = existingWalls.filter(w => w.startVertexId && w.endVertexId);
+      if (wallsWithIds.length > 0) {
+        console.warn(`   Available walls with IDs:`, wallsWithIds.map(w => `${w.startVertexId} → ${w.endVertexId}`));
+      }
+    }
+  } else {
+    console.warn(`⚠️ Wall match Strategy 0 skipped: wall[${newWallIndex}] vertices missing IDs (v1.id=${v1.id}, v2.id=${v2.id})`);
+  }
+
   // Strategy 1: If vertex count is the same, match by topology (vertexIndex)
   // This handles vertex movement correctly
   if (newVertices.length === oldVertices.length) {
     const matchingWall = existingWalls.find(w => w.vertexIndex === newWallIndex);
     if (matchingWall) {
+      console.log(`✅ Wall match found (Strategy 1 - Topology): wall[${newWallIndex}] matched by vertex index`);
       return matchingWall;
     }
   }
@@ -110,6 +219,7 @@ function findMatchingWall(
     const v2Match = Math.abs(v2.x - oldV2.x) < tolerance && Math.abs(v2.y - oldV2.y) < tolerance;
 
     if (v1Match && v2Match) {
+      console.log(`✅ Wall match found (Strategy 2 - Position): wall[${newWallIndex}] matched by exact position`);
       return wall;
     }
   }
@@ -132,10 +242,26 @@ function findMatchingWall(
 
     if (v1OnOld && v2OnOld) {
       // This new wall is a subsegment of the old wall (wall was split)
-      return wall;
+      // Filter apertures to only include those that fall within this segment
+      const filteredApertures = filterAperturesForSegment(
+        wall.apertures,
+        oldV1,
+        oldV2,
+        v1,
+        v2
+      );
+
+      console.log(`✅ Wall match found (Strategy 3 - Subsegment): wall[${newWallIndex}] is a subsegment of old wall`);
+      // Return wall with filtered apertures
+      return {
+        ...wall,
+        apertures: filteredApertures
+      };
     }
   }
 
+  // No match found - apertures will be lost!
+  console.error(`❌ NO WALL MATCH FOUND: wall[${newWallIndex}] (${v1.id} → ${v2.id}) - APERTURES WILL BE LOST!`);
   return undefined;
 }
 
@@ -155,6 +281,13 @@ export function generateWalls(
   oldVertices?: Vertex[]
 ): Wall[] {
   if (vertices.length < 3) return [];
+
+  // Validation: Ensure all vertices have IDs for proper wall matching
+  const verticesWithoutIds = vertices.filter(v => !v.id);
+  if (verticesWithoutIds.length > 0) {
+    console.error(`❌ generateWalls called with ${verticesWithoutIds.length} vertices missing IDs!`, verticesWithoutIds);
+    console.error('   This will cause aperture loss when walls are regenerated.');
+  }
 
   const walls: Wall[] = [];
   const numEdges = vertices.length;
@@ -233,6 +366,8 @@ export function generateWalls(
     // Store wall with computed corners and preserved/default properties
     walls.push({
       vertexIndex: i,
+      startVertexId: innerStart.id, // Stable vertex ID reference
+      endVertexId: innerEnd.id,     // Stable vertex ID reference
       thickness: existingWall?.thickness ?? thickness,
       wallType: existingWall?.wallType ?? 'interior_division', // Preserve or default
       height: existingWall?.height ?? 2.7, // Preserve or default
@@ -240,7 +375,9 @@ export function generateWalls(
       normal: { x: normalX, y: normalY },
       // Store the computed corner intersections
       startCorner,
-      endCorner
+      endCorner,
+      // Preserve roomEdgeIndex for proper matching during envelope recalculation
+      roomEdgeIndex: existingWall?.roomEdgeIndex ?? i
     });
   }
 
@@ -519,81 +656,48 @@ export function generateWallsFromEnvelope(
     const worldV2 = worldEnvelope[nextIndex];
     const wallType = classifyWallType(worldV1, worldV2, allRoomEnvelopes, currentRoomIndex);
 
-    // Try to preserve apertures from existing walls by matching positions
-    let apertures: Wall['apertures'] = [];
+    // Match this envelope wall directly to existing walls by checking ALL existing walls
+    // Don't use proximity! Just iterate through existing walls and see if any match by index or topology
+    let matchedWall: Wall | undefined;
+    let wallStartId: string | undefined;
+    let wallEndId: string | undefined;
+
     if (existingWalls) {
-      // Find matching wall by position
-      const matchingWall = existingWalls.find(w => {
-        if (!room.vertices || w.vertexIndex >= room.vertices.length) return false;
-        const oldV1 = room.vertices[w.vertexIndex];
-        const oldV2 = room.vertices[(w.vertexIndex + 1) % room.vertices.length];
-
-        // Check if positions roughly match (within 10cm)
-        const tolerance = 10;
-        return pointOnSegment(oldV1, innerStart, innerEnd, tolerance) &&
-               pointOnSegment(oldV2, innerStart, innerEnd, tolerance);
-      });
-
-      if (matchingWall) {
-        apertures = matchingWall.apertures ?? [];
-        // Also preserve custom thickness and height
-        thickness = matchingWall.thickness;
+      // Try to match by the SAME index first (works when vertex count doesn't change)
+      if (i < existingWalls.length) {
+        const candidateWall = existingWalls[i];
+        // Use this wall's vertex IDs as our IDs
+        wallStartId = candidateWall.startVertexId;
+        wallEndId = candidateWall.endVertexId;
+        matchedWall = candidateWall;
+        console.log(`🗺️ Envelope wall ${i} → using existing wall[${i}] IDs: ${wallStartId?.substring(0,8)} → ${wallEndId?.substring(0,8)}`);
       }
     }
 
-    // Map this envelope edge to the corresponding centerline/room edge
-    // Use centerlineVertices if available, otherwise fall back to room vertices
-    const referenceVertices = (room.centerlineVertices && room.centerlineVertices.length > 0)
-      ? room.centerlineVertices
-      : room.vertices;
-
-    // Calculate midpoint of envelope edge
-    const envMidX = (innerStart.x + innerEnd.x) / 2;
-    const envMidY = (innerStart.y + innerEnd.y) / 2;
-
-    // Find closest reference edge
-    let closestEdgeIndex = i; // Default to same index
-    let minDist = Infinity;
-
-    if (referenceVertices && referenceVertices.length > 0) {
-      for (let j = 0; j < referenceVertices.length; j++) {
-        const v1 = referenceVertices[j];
-        const v2 = referenceVertices[(j + 1) % referenceVertices.length];
-
-        // Calculate distance from envelope midpoint to reference edge
-        const dx = v2.x - v1.x;
-        const dy = v2.y - v1.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-
-        if (len === 0) continue;
-
-        // Project envelope midpoint onto reference edge
-        const t = Math.max(0, Math.min(1,
-          ((envMidX - v1.x) * dx + (envMidY - v1.y) * dy) / (len * len)
-        ));
-
-        const projX = v1.x + t * dx;
-        const projY = v1.y + t * dy;
-
-        const dist = Math.sqrt((envMidX - projX) ** 2 + (envMidY - projY) ** 2);
-
-        if (dist < minDist) {
-          minDist = dist;
-          closestEdgeIndex = j;
-        }
-      }
+    // Now match apertures using the wall we found
+    let apertures: Wall['apertures'] = [];
+    let preservedHeight: number | undefined;
+    if (matchedWall) {
+      console.log(`✅ generateWallsFromEnvelope: Matched envelope wall ${i} to existing wall (${matchedWall.apertures?.length || 0} apertures)`);
+      apertures = matchedWall.apertures ?? [];
+      thickness = matchedWall.thickness;
+      preservedHeight = matchedWall.height;
+    } else {
+      console.warn(`⚠️ generateWallsFromEnvelope: No existing wall found for envelope wall ${i}`);
     }
 
     walls.push({
       vertexIndex: i,
+      startVertexId: wallStartId, // Preserve from existing wall
+      endVertexId: wallEndId,     // Preserve from existing wall
       thickness,
       wallType,
-      height: existingWalls?.[i]?.height ?? 2.7,
+      height: preservedHeight ?? 2.7,
       apertures,
       normal: { x: normalX, y: normalY },
       startCorner,
       endCorner,
-      roomEdgeIndex: closestEdgeIndex // Map to room/centerline edge for constraints
+      roomEdgeIndex: matchedWall?.roomEdgeIndex ?? i // Preserve roomEdgeIndex
     });
   }
 
