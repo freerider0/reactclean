@@ -590,20 +590,14 @@ export const createRoomsSlice: StateCreator<
    * Should be called after rooms are joined/positioned in assembly mode
    */
   recalculateAllEnvelopes: async () => {
-    const currentRooms = get().getAllRooms();
-    const currentConfig = get().config;
-
     set((state) => {
       state.isCalculatingEnvelopes = true;
     });
 
+    const currentConfig = get().config;
+    const currentRooms = get().getAllRooms(); // Get fresh data right before async call
+
     console.log('🔄 Recalculating envelopes for', currentRooms.length, 'rooms');
-    console.log('📊 Room states before envelope calculation:');
-    currentRooms.forEach(r => {
-      console.log(`  Room ${r.id}:`);
-      console.log(`    vertices: ${r.vertices.length}`, r.vertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3));
-      console.log(`    centerlineVertices: ${r.centerlineVertices.length}`, r.centerlineVertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3));
-    });
     console.log('🔧 Using wall thicknesses:', {
       interior: currentConfig.defaultInteriorWallThickness,
       exterior: currentConfig.defaultExteriorWallThickness,
@@ -618,57 +612,57 @@ export const createRoomsSlice: StateCreator<
       currentConfig.defaultExteriorWallThickness
     );
 
-    // Update rooms with envelope data AND auto-classified walls
+    // Update rooms with envelope data - work entirely with fresh state data inside transaction
     set((state) => {
-      currentRooms.forEach(room => {
-        const result = envelopeMap.get(room.id);
+      // Don't iterate over stale snapshot - use fresh state
+      state.rooms.forEach((freshRoom, roomId) => {
+        const result = envelopeMap.get(roomId);
         if (!result) return;
 
-        // Get FRESH room data from store (not the captured old data)
-        const freshRoom = state.rooms.get(room.id);
-        if (!freshRoom) return;
-
-        console.log(`✨ Room ${room.id}: envelope updated`);
+        console.log(`✨ Room ${roomId}: envelope updated`);
         console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
         console.log(`  → room.vertices: ${freshRoom.vertices.length}, centerlineVertices: ${freshRoom.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
         console.log(`  → Keeping existing ${freshRoom.walls.length} walls (tied to room.vertices, not envelope)`);
 
-        // Use Immer direct mutation - simpler and clearer!
-        // Envelope is ONLY for UI rendering - NEVER touches walls or vertices
-        freshRoom.envelopeVertices = result.envelope;
-        freshRoom.innerBoundaryVertices = result.innerBoundary;
-        freshRoom.debugMergedCenterline = result.debugCenterline;
-        freshRoom.debugContractedEnvelope = result.debugContracted;
+        // Build updated room object - MUST replace entire object to trigger Zustand reactivity
+        const updatedRoom = {
+          ...freshRoom,
+          envelopeVertices: result.envelope,
+          innerBoundaryVertices: result.innerBoundary,
+          debugMergedCenterline: result.debugCenterline,
+          debugContractedEnvelope: result.debugContracted
+        };
 
         // Store assembly vertices if provided (collinear points for envelope calculation only)
         if (result.updatedVertices) {
           console.log(`  ⭐ Assembly vertices: ${freshRoom.vertices.length} → ${result.updatedVertices.length} (collinear points inserted for envelope)`);
-          freshRoom.assemblyVertices = result.updatedVertices;
+          updatedRoom.assemblyVertices = result.updatedVertices;
 
           // Recalculate centerline using the new assembly vertices (with reference points)
           // This ensures the pink centerline and subsequent envelope calculations use the collinear points
-          freshRoom.centerlineVertices = calculateCenterline(freshRoom);
-          console.log(`  ↻ Recalculated centerline: ${freshRoom.centerlineVertices.length} vertices (using assembly vertices with reference points)`);
+          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+          console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using assembly vertices with reference points)`);
 
-          // NEVER modify freshRoom.vertices or freshRoom.walls during envelope update!
+          // NEVER modify updatedRoom.vertices or updatedRoom.walls during envelope update!
         } else if (freshRoom.assemblyVertices) {
           // Clear assembly vertices if no longer needed
-          freshRoom.assemblyVertices = undefined;
+          updatedRoom.assemblyVertices = undefined;
 
           // Recalculate centerline using geometry vertices only
-          freshRoom.centerlineVertices = calculateCenterline(freshRoom);
-          console.log(`  ↻ Recalculated centerline: ${freshRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
+          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+          console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
         }
+
+        // Replace entire room object to trigger Map change detection
+        state.rooms.set(roomId, updatedRoom);
       });
 
-      // Extract and store global contracted envelopes (one per room group)
-      // Deduplicate by converting to world coordinates and comparing
-      const contractedEnvelopesWorld: Vertex[][] = [];
-      const seen = new Set<string>();
+      // Extract contracted envelopes with room IDs to avoid self-intersection
+      // Use fresh room data from state, not snapshot
+      const envelopesByRoom = new Map<string, Vertex[]>();
 
-      currentRooms.forEach(room => {
-        const freshRoom = state.rooms.get(room.id);
-        if (!freshRoom || !freshRoom.debugContractedEnvelope) return;
+      state.rooms.forEach((freshRoom, roomId) => {
+        if (!freshRoom.debugContractedEnvelope) return;
 
         // Convert contracted envelope to world coordinates
         const worldEnvelope = freshRoom.debugContractedEnvelope.map(v => ({
@@ -677,34 +671,41 @@ export const createRoomsSlice: StateCreator<
           y: (v.x * Math.sin(freshRoom.rotation) + v.y * Math.cos(freshRoom.rotation)) * freshRoom.scale + freshRoom.position.y
         }));
 
-        // Create a signature for this envelope (first 3 points rounded to avoid duplicates)
-        const signature = worldEnvelope
-          .slice(0, Math.min(3, worldEnvelope.length))
-          .map(v => `${v.x.toFixed(1)},${v.y.toFixed(1)}`)
-          .join('|');
-
-        if (!seen.has(signature)) {
-          seen.add(signature);
-          contractedEnvelopesWorld.push(worldEnvelope);
-        }
+        envelopesByRoom.set(roomId, worldEnvelope);
       });
 
-      state.contractedEnvelopes = contractedEnvelopesWorld;
-      console.log(`📐 Extracted ${contractedEnvelopesWorld.length} unique contracted envelope(s)`);
+      // Store for visualization
+      state.contractedEnvelopes = Array.from(envelopesByRoom.values());
+      console.log(`📐 Extracted ${envelopesByRoom.size} contracted envelope(s)`);
 
       // Calculate wall segments based on contracted envelope intersections
-      if (contractedEnvelopesWorld.length > 0) {
+      if (envelopesByRoom.size > 0) {
         console.log('🔷 Calculating wall segments...');
-        const roomsWithSegments = calculateWallSegmentsForAllRooms(
-          currentRooms,
-          contractedEnvelopesWorld
-        );
+
+        // For each room, only check intersections with OTHER rooms' envelopes
+        // Use fresh room data from state, not the snapshot
+        const roomsWithSegments = Array.from(state.rooms.values()).map(room => {
+          // Get envelopes excluding this room's own envelope
+          const otherEnvelopes = Array.from(envelopesByRoom.entries())
+            .filter(([roomId]) => roomId !== room.id)
+            .map(([_, envelope]) => envelope);
+
+          // Calculate segments with only other rooms' envelopes
+          return calculateWallSegmentsForAllRooms([room], otherEnvelopes)[0];
+        });
 
         // Update rooms with calculated segments
+        // IMPORTANT: Replace the entire room object to trigger Zustand reactivity
         roomsWithSegments.forEach(updatedRoom => {
+          if (!updatedRoom) return;
           const freshRoom = state.rooms.get(updatedRoom.id);
           if (freshRoom) {
-            freshRoom.walls = updatedRoom.walls;
+            // Replace entire room object to trigger Map change detection
+            state.rooms.set(updatedRoom.id, {
+              ...freshRoom,
+              walls: updatedRoom.walls,
+              segmentVertices: updatedRoom.segmentVertices
+            });
             const totalSegments = updatedRoom.walls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
             console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
           }

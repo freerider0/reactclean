@@ -90,7 +90,8 @@ export function drawEnvelope(
   if (isDragging || hasSegments) {
     drawWalls(ctx, room, viewport, {
       snapSegmentWorld,
-      selectedSegment
+      selectedSegment,
+      skipSegments: true  // Segments drawn separately on top
     });
   }
 
@@ -713,6 +714,7 @@ export function drawWalls(
     selectedWallIndex?: number | null;  // Wall index that is selected in Edit mode
     hoverWallIndex?: number | null;  // Wall index that is hovered in Edit mode
     selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null;  // Selected segment in Assembly mode
+    skipSegments?: boolean;  // Skip drawing segments (they will be drawn separately on top)
   } = {}
 ): void {
   if (room.walls.length === 0) return;
@@ -780,7 +782,8 @@ export function drawWalls(
                         wallIndex === options.hoverWallIndex;
 
     // If wall has segments, draw each segment separately with its own color
-    if (wall.segments && wall.segments.length > 0 && room.segmentVertices) {
+    // Skip if segments will be drawn separately on top
+    if (wall.segments && wall.segments.length > 0 && room.segmentVertices && !options.skipSegments) {
       // Build segmentVertex lookup map for O(1) access
       const segmentVertexMap = new Map(
         room.segmentVertices.map(v => [v.id, v])
@@ -1086,8 +1089,105 @@ export function drawEdgeHandles(
 }
 
 /**
- * Draw contracted envelope vertices (green line vertices) plus collinear room vertices
- * Collects all unique world positions and draws each once
+ * Draw segments for all rooms - call this LAST to ensure segments are on top
+ */
+export function drawSegments(
+  ctx: CanvasRenderingContext2D,
+  allRooms: Room[],
+  viewport: Viewport,
+  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
+): void {
+  ctx.save();
+
+  allRooms.forEach(room => {
+    if (!room.walls || room.walls.length === 0 || !room.segmentVertices) return;
+
+    const segmentVertexMap = new Map(
+      room.segmentVertices.map(v => [v.id, v])
+    );
+
+    room.walls.forEach((wall, wallIndex) => {
+      if (!wall.segments || wall.segments.length === 0) return;
+
+      wall.segments.forEach((segment, segmentIndex) => {
+        const isSelected = selectedSegment &&
+                          selectedSegment.roomId === room.id &&
+                          selectedSegment.wallIndex === wallIndex &&
+                          selectedSegment.segmentIndex === segmentIndex;
+
+        const segStartLocal = segmentVertexMap.get(segment.startVertexId);
+        const segEndLocal = segmentVertexMap.get(segment.endVertexId);
+
+        if (!segStartLocal || !segEndLocal) return;
+
+        const segStartWorld = localToWorld(segStartLocal, room.position, room.rotation, room.scale);
+        const segEndWorld = localToWorld(segEndLocal, room.position, room.rotation, room.scale);
+        const segStartScreen = worldToScreen(segStartWorld, viewport);
+        const segEndScreen = worldToScreen(segEndWorld, viewport);
+
+        const dx = segEndScreen.x - segStartScreen.x;
+        const dy = segEndScreen.y - segStartScreen.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length < 0.001) return;
+
+        const normalX = -dy / length;
+        const normalY = dx / length;
+        const halfThickness = (wall.thickness / 2) * viewport.zoom;
+
+        const outer1 = {
+          x: segStartScreen.x + normalX * halfThickness,
+          y: segStartScreen.y + normalY * halfThickness
+        };
+        const outer2 = {
+          x: segEndScreen.x + normalX * halfThickness,
+          y: segEndScreen.y + normalY * halfThickness
+        };
+        const inner2 = {
+          x: segEndScreen.x - normalX * halfThickness,
+          y: segEndScreen.y - normalY * halfThickness
+        };
+        const inner1 = {
+          x: segStartScreen.x - normalX * halfThickness,
+          y: segStartScreen.y - normalY * halfThickness
+        };
+
+        ctx.beginPath();
+        ctx.moveTo(outer1.x, outer1.y);
+        ctx.lineTo(outer2.x, outer2.y);
+        ctx.lineTo(inner2.x, inner2.y);
+        ctx.lineTo(inner1.x, inner1.y);
+        ctx.closePath();
+
+        const colors = {
+          exterior: isSelected ? '#16a34a' : 'rgba(34, 197, 94, 0.7)',
+          interior_division: isSelected ? '#2563eb' : 'rgba(59, 130, 246, 0.7)',
+          interior_structural: isSelected ? '#7c3aed' : 'rgba(124, 58, 237, 0.7)',
+          interior_partition: isSelected ? '#db2777' : 'rgba(219, 39, 119, 0.7)',
+          terrain_contact: isSelected ? '#65a30d' : 'rgba(101, 163, 13, 0.7)',
+          adiabatic: isSelected ? '#fbbf24' : 'rgba(251, 191, 36, 0.7)',
+          neighbor_same_block: isSelected ? '#f97316' : 'rgba(249, 115, 22, 0.7)',
+          neighbor_other_block: isSelected ? '#dc2626' : 'rgba(220, 38, 38, 0.7)'
+        };
+
+        ctx.fillStyle = colors[segment.wallType] || 'rgba(156, 163, 175, 0.7)';
+        ctx.fill();
+
+        if (isSelected) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      });
+    });
+  });
+
+  ctx.restore();
+}
+
+/**
+ * Draw segment vertices (orange dots) - shows the actual vertices used for wall segments
+ * These are the original room vertices plus intersection points with contracted envelopes
  */
 export function drawWallSegmentVertices(
   ctx: CanvasRenderingContext2D,
@@ -1098,56 +1198,20 @@ export function drawWallSegmentVertices(
 
   const vertexColor = '#f59e0b'; // Orange
   const markerSize = 6;
-  const pointsToDrawSet = new Set<string>(); // Unique world positions
+  const pointsToDrawSet = new Set<string>(); // Unique world positions to avoid duplicates
   const pointsToDraw: Vertex[] = [];
 
-  // 1. Collect all contracted envelope vertices (in world coords)
+  // Collect all segmentVertices from all rooms
   allRooms.forEach(room => {
-    if (!room.debugContractedEnvelope || room.debugContractedEnvelope.length === 0) return;
+    if (!room.segmentVertices || room.segmentVertices.length === 0) return;
 
-    room.debugContractedEnvelope.forEach(vertex => {
+    room.segmentVertices.forEach(vertex => {
       const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
       const key = `${worldVertex.x.toFixed(1)},${worldVertex.y.toFixed(1)}`;
 
       if (!pointsToDrawSet.has(key)) {
         pointsToDrawSet.add(key);
         pointsToDraw.push(worldVertex);
-      }
-    });
-  });
-
-  // 2. Collect contracted envelope edges for collinearity checking
-  const envelopeEdges: Array<{ p1: Vertex; p2: Vertex }> = [];
-  allRooms.forEach(room => {
-    if (!room.debugContractedEnvelope || room.debugContractedEnvelope.length === 0) return;
-
-    const envelopeWorld = room.debugContractedEnvelope.map(v =>
-      localToWorld(v, room.position, room.rotation, room.scale)
-    );
-
-    for (let i = 0; i < envelopeWorld.length; i++) {
-      envelopeEdges.push({
-        p1: envelopeWorld[i],
-        p2: envelopeWorld[(i + 1) % envelopeWorld.length]
-      });
-    }
-  });
-
-  // 3. Check all room vertices for collinearity with envelope edges
-  allRooms.forEach(room => {
-    room.vertices.forEach(vertex => {
-      const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
-
-      for (const edge of envelopeEdges) {
-        if (isPointOnSegment(worldVertex, edge.p1, edge.p2, 5)) {
-          const key = `${worldVertex.x.toFixed(1)},${worldVertex.y.toFixed(1)}`;
-
-          if (!pointsToDrawSet.has(key)) {
-            pointsToDrawSet.add(key);
-            pointsToDraw.push(worldVertex);
-          }
-          break;
-        }
       }
     });
   });

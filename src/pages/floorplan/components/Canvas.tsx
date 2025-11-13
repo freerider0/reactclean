@@ -26,7 +26,8 @@ import {
   drawRoomSnapIndicators,
   drawConstraintIndicators,
   drawCenterlineVertexNumbers,
-  drawContractedEnvelopeVertexNumbers
+  drawContractedEnvelopeVertexNumbers,
+  drawSegments
 } from '../utils/rendering';
 import {
   hitTestRoomVertices,
@@ -88,9 +89,8 @@ interface CanvasProps {
 
 export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationFrameRef = useRef<number>();
 
-  // Get state from Zustand store - subscribe to rooms Map, convert to array with useMemo
+  // Get state from Zustand store - React will re-render when these change
   const roomsMap = useFloorplanStore(state => state.rooms);
   const rooms = useMemo(() => Array.from(roomsMap.values()), [roomsMap]);
   const editorMode = useFloorplanStore(state => state.editorMode);
@@ -221,7 +221,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
   /**
    * Render everything
    */
-  const render = () => {
+  // Canvas rendering - React re-renders when subscribed state changes
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -229,15 +230,6 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-
-    // Get fresh values from store on each render
-    const currentState = useFloorplanStore.getState();
-    const rooms = Array.from(currentState.rooms.values());
-    const editorMode = currentState.editorMode;
-    const config = currentState.config;
-    const viewport = currentState.viewport;
-    const drawing = currentState.drawing;
-    const selection = currentState.selection;
 
     // Clear canvas
     clearCanvas(ctx, rect.width, rect.height);
@@ -292,11 +284,6 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     rooms.forEach(room => {
       drawApertures(ctx, room, viewport);
     });
-
-    // Draw wall segment vertices (in Assembly mode only, hide during drag)
-    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
-      drawWallSegmentVertices(ctx, rooms, viewport);
-    }
 
     // Draw aperture ghost preview (when dragging in edit mode)
     if (editorMode === EditorMode.Edit && editDragState.current.dragType === 'aperture' &&
@@ -668,30 +655,32 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       }
     }
 
+    // Draw segments on top of everything (in Assembly mode only, hide during drag)
+    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
+      drawSegments(ctx, rooms, viewport, selection.selectedSegment);
+    }
+
+    // Draw wall segment vertices (orange dots) on top of segments
+    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
+      drawWallSegmentVertices(ctx, rooms, viewport);
+    }
+
     // Draw room joining snap indicators (in assembly mode during drag)
     if (editorMode === EditorMode.Assembly && lastSnapResult) {
       drawRoomSnapIndicators(ctx, lastSnapResult.current, viewport);
     }
-  };
-
-  /**
-   * Animation loop
-   */
-  useEffect(() => {
-    const animate = () => {
-      render();
-      animationFrameRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, [
+    rooms,
+    viewport,
+    config,
+    editorMode,
+    selection,
+    drawing,
+    assemblyDragState,
+    editDragState,
+    lastSnapResult,
+    editableDimensions
+  ]); // React re-renders and redraws canvas when state changes
 
   /**
    * Handle dimension editing submission
@@ -1429,6 +1418,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
           // Store current world point for rendering ghost
           editDragCurrentWorldPoint.current = worldPoint;
+          // Trigger re-render so ghost updates during drag
+          setCurrentMouseWorld(worldPoint);
 
           // Check walls on ALL rooms (not just selected room) - find closest wall
           for (const room of rooms) {

@@ -1,24 +1,25 @@
 /**
  * Wall Segments Utility
- * Calculates wall subdivisions based on contracted envelope intersections
- * Segments reference actual vertices in room.segmentVertices (not parametric)
+ * Subdivides room edges where green line vertices fall on them
+ * Creates segments for wall type classification (exterior vs interior)
  */
 
 import type { Room, Vertex, WallSegment, WallType } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
- * Line segment intersection point
+ * Point on an edge with parametric position
  */
-interface IntersectionPoint {
+interface PointOnEdge {
   vertex: Vertex;
   t: number;  // Parametric position [0, 1] along the edge
 }
 
 /**
- * Calculate wall segments for all rooms based on contracted envelope intersections
+ * Calculate wall segments for all rooms
+ * Subdivides room edges where green line vertices fall on them
  * @param rooms - All rooms in the floorplan
- * @param contractedEnvelopes - Global contracted envelopes (one per room group) in world coords
+ * @param contractedEnvelopes - Contracted envelopes from other rooms (world coords)
  * @returns Rooms with updated segmentVertices and wall.segments
  */
 export function calculateWallSegmentsForAllRooms(
@@ -26,191 +27,91 @@ export function calculateWallSegmentsForAllRooms(
   contractedEnvelopes: Vertex[][]
 ): Room[] {
   return rooms.map(room => {
-    // Step 1: Build segmentVertices (vertices + intersection points)
-    const segmentVertices = buildSegmentVertices(room, contractedEnvelopes);
-
-    // Step 2: Create segments referencing segmentVertices by ID
-    const updatedWalls = createSegmentsFromSegmentVertices(
-      room,
-      segmentVertices,
-      contractedEnvelopes
-    );
+    const { segmentVerticesLocal, updatedWalls } = buildSegmentsDirectly(room, contractedEnvelopes);
 
     return {
       ...room,
-      segmentVertices,
+      segmentVertices: segmentVerticesLocal,
       walls: updatedWalls
     };
   });
 }
 
 /**
- * Build segmentVertices array: original vertices + intersection points
+ * Build segments for a room by subdividing edges where green line vertices fall
  * @param room - Room to process
- * @param contractedEnvelopes - Contracted envelopes for finding intersections
- * @returns Array of vertices with intersections inserted (in CCW order)
+ * @param contractedEnvelopes - Contracted envelopes from other rooms (world coords)
+ * @returns Segment vertices (local coords) and updated walls with segments
  */
-function buildSegmentVertices(
+function buildSegmentsDirectly(
   room: Room,
   contractedEnvelopes: Vertex[][]
-): Vertex[] {
-  // Transform room vertices to world coordinates
+): { segmentVerticesLocal: Vertex[]; updatedWalls: typeof room.walls } {
+  // Transform room vertices to world coordinates (these are the actual edges to subdivide)
   const worldVertices = room.vertices.map(v =>
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
-  const segmentVertices: Vertex[] = [];
+  // Transform THIS room's contracted envelope (green line) to world coords
+  const worldContractedEnvelope = room.debugContractedEnvelope
+    ? room.debugContractedEnvelope.map(v => localToWorld(v, room.position, room.rotation, room.scale))
+    : [];
+
+  // Collect all green line vertices from all envelopes (this room + other rooms)
+  const allGreenLineVertices: Vertex[] = [...worldContractedEnvelope];
+  for (const envelope of contractedEnvelopes) {
+    allGreenLineVertices.push(...envelope);
+  }
+
+  const allSegmentVerticesWorld: Vertex[] = [];
+  const updatedWalls: typeof room.walls = [];
   const n = room.vertices.length;
 
-  // Process each edge
+  // Process each edge once
   for (let i = 0; i < n; i++) {
     const edgeStart = worldVertices[i];
     const edgeEnd = worldVertices[(i + 1) % n];
 
-    // Add start vertex (reuse original ID for stability)
-    segmentVertices.push({
+    // Build ordered vertex list for this edge
+    const edgeVerticesWorld: Vertex[] = [];
+
+    // Add start vertex
+    edgeVerticesWorld.push({
       ...edgeStart,
-      id: room.vertices[i].id  // Keep stable ID from original vertices
+      id: room.vertices[i].id
     });
 
-    // Find intersections on this edge (excluding endpoints)
-    const intersections = findEdgeIntersections(edgeStart, edgeEnd, contractedEnvelopes);
-
-    // Add intersection vertices (with new IDs)
-    for (const intersection of intersections) {
-      segmentVertices.push(intersection.vertex);
-    }
-  }
-
-  // Transform back to local coordinates
-  return segmentVertices.map(v =>
-    worldToLocal(v, room.position, room.rotation, room.scale)
-  );
-}
-
-/**
- * Find intersection points between an edge and contracted envelopes
- * Excludes endpoints to avoid duplicates
- * @param edgeStart - Start vertex of edge (world coords)
- * @param edgeEnd - End vertex of edge (world coords)
- * @param envelopes - Array of contracted envelope polygons (world coords)
- * @returns Array of intersection points sorted by distance from start
- */
-function findEdgeIntersections(
-  edgeStart: Vertex,
-  edgeEnd: Vertex,
-  envelopes: Vertex[][]
-): IntersectionPoint[] {
-  const intersections: IntersectionPoint[] = [];
-
-  // Check intersection with each envelope edge
-  for (const envelope of envelopes) {
-    for (let i = 0; i < envelope.length; i++) {
-      const envStart = envelope[i];
-      const envEnd = envelope[(i + 1) % envelope.length];
-
-      const intersection = lineSegmentIntersection(
-        edgeStart,
-        edgeEnd,
-        envStart,
-        envEnd
-      );
-
-      if (intersection) {
-        // Calculate parametric t along the edge
-        const dx = edgeEnd.x - edgeStart.x;
-        const dy = edgeEnd.y - edgeStart.y;
-        const length = Math.sqrt(dx * dx + dy * dy);
-
-        if (length > 0.001) {
-          const t = Math.sqrt(
-            Math.pow(intersection.x - edgeStart.x, 2) +
-            Math.pow(intersection.y - edgeStart.y, 2)
-          ) / length;
-
-          // Only add if not too close to endpoints (avoid duplicates)
-          if (t > 0.001 && t < 0.999) {
-            intersections.push({ vertex: intersection, t });
-          }
-        }
-      }
-    }
-  }
-
-  // Sort by parametric t value (distance from start)
-  return intersections.sort((a, b) => a.t - b.t);
-}
-
-/**
- * Create wall segments from segmentVertices
- * @param room - Room to process
- * @param segmentVertices - Segment vertices (local coords)
- * @param contractedEnvelopes - Contracted envelopes for classification (world coords)
- * @returns Updated walls array with segments
- */
-function createSegmentsFromSegmentVertices(
-  room: Room,
-  segmentVertices: Vertex[],
-  contractedEnvelopes: Vertex[][]
-): typeof room.walls {
-  // Transform vertices to world coordinates for processing
-  const worldVertices = room.vertices.map(v =>
-    localToWorld(v, room.position, room.rotation, room.scale)
-  );
-  const worldSegmentVertices = segmentVertices.map(v =>
-    localToWorld(v, room.position, room.rotation, room.scale)
-  );
-
-  // Build ID lookup map for fast access
-  const segmentVertexMap = new Map(worldSegmentVertices.map(v => [v.id, v]));
-
-  return room.walls.map((wall, wallIndex) => {
-    const edgeStartId = room.vertices[wallIndex].id;
-    const edgeEndId = room.vertices[(wallIndex + 1) % room.vertices.length].id;
-
-    // Find all segmentVertices on this edge (between edgeStart and edgeEnd)
-    const edgeStart = worldVertices[wallIndex];
-    const edgeEnd = worldVertices[(wallIndex + 1) % worldVertices.length];
-
-    const edgeSegmentVertices: Vertex[] = [];
-
-    for (const sv of worldSegmentVertices) {
-      if (isPointOnEdge(sv, edgeStart, edgeEnd, 5)) {
-        edgeSegmentVertices.push(sv);
-      }
+    // Find green line vertices that fall on this edge (already sorted by parametric t)
+    const pointsOnEdge = findPointsOnEdge(edgeStart, edgeEnd, allGreenLineVertices);
+    for (const point of pointsOnEdge) {
+      edgeVerticesWorld.push(point.vertex);
     }
 
-    // Sort by distance from edge start
-    edgeSegmentVertices.sort((a, b) => {
-      const distA = Math.sqrt(
-        Math.pow(a.x - edgeStart.x, 2) + Math.pow(a.y - edgeStart.y, 2)
-      );
-      const distB = Math.sqrt(
-        Math.pow(b.x - edgeStart.x, 2) + Math.pow(b.y - edgeStart.y, 2)
-      );
-      return distA - distB;
+    // Add end vertex
+    const endVertexId = room.vertices[(i + 1) % n].id;
+    edgeVerticesWorld.push({
+      ...edgeEnd,
+      id: endVertexId
     });
 
-    // Create segments between consecutive vertices
+    // Create segments for this edge
     const segments: WallSegment[] = [];
-    for (let i = 0; i < edgeSegmentVertices.length - 1; i++) {
-      const startVertex = edgeSegmentVertices[i];
-      const endVertex = edgeSegmentVertices[i + 1];
+    const allEnvelopes = worldContractedEnvelope.length > 0
+      ? [worldContractedEnvelope, ...contractedEnvelopes]
+      : contractedEnvelopes;
 
-      // Calculate midpoint for classification
+    for (let j = 0; j < edgeVerticesWorld.length - 1; j++) {
+      const startVertex = edgeVerticesWorld[j];
+      const endVertex = edgeVerticesWorld[j + 1];
+
+      // Classify segment by checking if midpoint is on any green line
       const midpoint = {
         id: 'temp',
         x: (startVertex.x + endVertex.x) / 2,
         y: (startVertex.y + endVertex.y) / 2
       };
 
-      // Classify segment type
-      const wallType = classifySegmentType(
-        midpoint,
-        startVertex,
-        endVertex,
-        contractedEnvelopes
-      );
+      const wallType = classifySegmentType(midpoint, edgeStart, edgeEnd, allEnvelopes);
 
       segments.push({
         id: `seg_${uuidv4()}`,
@@ -220,23 +121,78 @@ function createSegmentsFromSegmentVertices(
       });
     }
 
-    return {
-      ...wall,
+    // Add vertices to global list (avoiding duplicates at edge junctions)
+    for (let j = 0; j < edgeVerticesWorld.length - 1; j++) {
+      allSegmentVerticesWorld.push(edgeVerticesWorld[j]);
+    }
+
+    // Store wall with its segments
+    updatedWalls.push({
+      ...room.walls[i],
       segments
-    };
-  });
+    });
+  }
+
+  // Transform all vertices to local coords once
+  const allSegmentVerticesLocal = allSegmentVerticesWorld.map(v =>
+    worldToLocal(v, room.position, room.rotation, room.scale)
+  );
+
+  return {
+    segmentVerticesLocal: allSegmentVerticesLocal,
+    updatedWalls
+  };
 }
 
 /**
- * Check if a point lies on an edge (within tolerance)
+ * Find which vertices lie ON an edge (within tolerance)
+ * @param edgeStart - Start vertex of edge (world coords)
+ * @param edgeEnd - End vertex of edge (world coords)
+ * @param points - Array of vertices to check (green line vertices)
+ * @returns Array of points that lie on the edge, sorted by distance from start
  */
-function isPointOnEdge(
-  point: Vertex,
+function findPointsOnEdge(
   edgeStart: Vertex,
   edgeEnd: Vertex,
-  tolerance: number
-): boolean {
-  return pointToSegmentDistance(point, edgeStart, edgeEnd) < tolerance;
+  points: Vertex[]
+): PointOnEdge[] {
+  const TOLERANCE = 5; // 5cm tolerance for "on edge" detection
+  const result: PointOnEdge[] = [];
+
+  const dx = edgeEnd.x - edgeStart.x;
+  const dy = edgeEnd.y - edgeStart.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+
+  if (length < 0.001) return result;
+
+  for (const point of points) {
+    // Calculate distance from point to edge
+    const distance = pointToSegmentDistance(point, edgeStart, edgeEnd);
+
+    if (distance < TOLERANCE) {
+      // Point is on the edge - calculate parametric t
+      const t = Math.sqrt(
+        Math.pow(point.x - edgeStart.x, 2) +
+        Math.pow(point.y - edgeStart.y, 2)
+      ) / length;
+
+      // Only add if not too close to endpoints (avoid duplicates)
+      if (t > 0.00001 && t < 0.99999) {
+        // Generate new unique ID to avoid collisions
+        result.push({
+          vertex: {
+            id: `v_${uuidv4()}`,
+            x: point.x,
+            y: point.y
+          },
+          t
+        });
+      }
+    }
+  }
+
+  // Sort by parametric t value (distance from start)
+  return result.sort((a, b) => a.t - b.t);
 }
 
 /**
@@ -275,41 +231,6 @@ function classifySegmentType(
 
   // Not on envelope = interior wall
   return 'interior_division';
-}
-
-/**
- * Calculate line segment intersection
- * @returns Intersection point or null if no intersection
- */
-function lineSegmentIntersection(
-  p1: Vertex,
-  p2: Vertex,
-  p3: Vertex,
-  p4: Vertex
-): Vertex | null {
-  const x1 = p1.x, y1 = p1.y;
-  const x2 = p2.x, y2 = p2.y;
-  const x3 = p3.x, y3 = p3.y;
-  const x4 = p4.x, y4 = p4.y;
-
-  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-
-  if (Math.abs(denom) < 0.0001) {
-    return null; // Parallel or coincident
-  }
-
-  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
-
-  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-    return {
-      id: `v_${uuidv4()}`,
-      x: x1 + t * (x2 - x1),
-      y: y1 + t * (y2 - y1)
-    };
-  }
-
-  return null;
 }
 
 /**

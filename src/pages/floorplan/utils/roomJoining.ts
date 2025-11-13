@@ -635,23 +635,31 @@ export function snapRoomToRooms(
     if (closestPair.moving.room && closestPair.moving.edgeIndex !== undefined) {
       const room = closestPair.moving.room;
       const edgeIdx = closestPair.moving.edgeIndex;
-      const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
-      const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
-      actualMovingWall = {
-        p1: { x: v1.x + proposedOffset.x, y: v1.y + proposedOffset.y },
-        p2: { x: v2.x + proposedOffset.x, y: v2.y + proposedOffset.y }
-      };
+
+      // Safety check: ensure vertices exist at these indices
+      if (room.vertices[edgeIdx] && room.vertices[(edgeIdx + 1) % room.vertices.length]) {
+        const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
+        const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+        actualMovingWall = {
+          p1: { x: v1.x + proposedOffset.x, y: v1.y + proposedOffset.y },
+          p2: { x: v2.x + proposedOffset.x, y: v2.y + proposedOffset.y }
+        };
+      }
     }
 
     if (closestPair.stationary.room && closestPair.stationary.edgeIndex !== undefined) {
       const room = closestPair.stationary.room;
       const edgeIdx = closestPair.stationary.edgeIndex;
-      const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
-      const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
-      actualStationaryWall = {
-        p1: v1,
-        p2: v2
-      };
+
+      // Safety check: ensure vertices exist at these indices
+      if (room.vertices[edgeIdx] && room.vertices[(edgeIdx + 1) % room.vertices.length]) {
+        const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
+        const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+        actualStationaryWall = {
+          p1: v1,
+          p2: v2
+        };
+      }
     }
 
     return {
