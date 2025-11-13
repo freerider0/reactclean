@@ -268,7 +268,127 @@ export function snapToEdge(
 }
 
 /**
- * Combined snap with priority: vertex > edge > orthogonal > grid
+ * Calculate intersection of two infinite lines
+ * Returns null if lines are parallel
+ */
+function lineIntersection(
+  p1: Vertex,
+  p2: Vertex,
+  p3: Vertex,
+  p4: Vertex
+): Vertex | null {
+  const x1 = p1.x, y1 = p1.y;
+  const x2 = p2.x, y2 = p2.y;
+  const x3 = p3.x, y3 = p3.y;
+  const x4 = p4.x, y4 = p4.y;
+
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+
+  // Lines are parallel or coincident
+  if (Math.abs(denom) < 0.0001) {
+    return null;
+  }
+
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+  // For infinite line intersection, we only need one segment check (line p3-p4)
+  // We don't check t because we want infinite extension of the drawing edge
+  if (u >= 0 && u <= 1) {
+    return {
+      x: x1 + t * (x2 - x1),
+      y: y1 + t * (y2 - y1)
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Snap to yellow line edge intersections when drawing
+ * Extends edges of EXISTING rooms infinitely, intersects with yellow line segments
+ */
+function snapToYellowLineIntersections(
+  point: Vertex,
+  lastVertex: Vertex,
+  rooms: Room[]
+): SnapResult {
+  const INTERSECTION_SNAP_THRESHOLD = 15;
+
+  const allIntersections: Vertex[] = [];
+
+  // For each existing room
+  for (const room of rooms) {
+    if (!room.vertices || room.vertices.length < 3) continue;
+
+    // Transform room vertices to world coordinates
+    const worldVertices = room.vertices.map(v =>
+      localToWorldSimple(v, room)
+    );
+
+    // For each edge of this existing room
+    for (let i = 0; i < worldVertices.length; i++) {
+      const edgeStart = worldVertices[i];
+      const edgeEnd = worldVertices[(i + 1) % worldVertices.length];
+
+      // Check intersections with all yellow lines (including this room's yellow line)
+      for (const otherRoom of rooms) {
+        if (!otherRoom.innerBoundaryVertices || otherRoom.innerBoundaryVertices.length < 3) continue;
+
+        // Transform yellow line to world coordinates
+        const worldYellowLine = otherRoom.innerBoundaryVertices.map(v =>
+          localToWorldSimple(v, otherRoom)
+        );
+
+        // Check each segment of yellow line
+        for (let j = 0; j < worldYellowLine.length; j++) {
+          const yellowStart = worldYellowLine[j];
+          const yellowEnd = worldYellowLine[(j + 1) % worldYellowLine.length];
+
+          // Find intersection: existing room edge extended infinitely, yellow edge as segment
+          const intersection = lineIntersection(
+            edgeStart, edgeEnd,        // Existing room edge (extended infinitely)
+            yellowStart, yellowEnd      // Yellow line edge (segment only)
+          );
+
+          if (intersection) {
+            allIntersections.push(intersection);
+          }
+        }
+      }
+    }
+  }
+
+  // Find closest intersection to mouse
+  let bestIntersection: Vertex | null = null;
+  let bestDistance = INTERSECTION_SNAP_THRESHOLD;
+
+  for (const intersection of allIntersections) {
+    const dist = distance(point, intersection);
+    if (dist < bestDistance) {
+      bestDistance = dist;
+      bestIntersection = intersection;
+    }
+  }
+
+  if (bestIntersection) {
+    return {
+      snapped: true,
+      position: bestIntersection,
+      snapType: SnapType.Edge
+    };
+  }
+
+  return {
+    snapped: false,
+    position: null
+  };
+}
+
+/**
+ * Combined snap with priority
+ * Drawing mode: yellow line intersections > orthogonal > grid
+ * Other modes: vertex > edge > orthogonal > grid
  */
 export function snapWithPriority(
   point: Vertex,
@@ -278,25 +398,55 @@ export function snapWithPriority(
   zoom: number,
   orthogonalEnabled: boolean,
   gridEnabled: boolean,
-  existingRooms?: Room[]
+  existingRooms?: Room[],
+  isDrawingMode?: boolean
 ): SnapResult {
-  // Priority 1: Snap to existing room vertices
-  if (existingRooms && existingRooms.length > 0) {
+  // Drawing mode: Yellow line vertices and edge intersections
+  if (isDrawingMode && existingRooms && existingRooms.length > 0) {
+    // Priority 1: Snap to yellow line vertices
+    for (const room of existingRooms) {
+      if (!room.innerBoundaryVertices || room.innerBoundaryVertices.length < 3) continue;
+
+      for (const localVertex of room.innerBoundaryVertices) {
+        const worldVertex = localToWorldSimple(localVertex, room);
+        const dist = distance(point, worldVertex);
+
+        if (dist < VERTEX_SNAP_THRESHOLD) {
+          return {
+            snapped: true,
+            position: worldVertex,
+            snapType: SnapType.Vertex
+          };
+        }
+      }
+    }
+
+    // Priority 2: Snap to yellow line edge intersections
+    if (lastVertex) {
+      const intersectionSnap = snapToYellowLineIntersections(point, lastVertex, existingRooms);
+      if (intersectionSnap.snapped) {
+        return intersectionSnap;
+      }
+    }
+  }
+
+  // Non-drawing modes: Priority 1: Snap to existing room vertices
+  if (!isDrawingMode && existingRooms && existingRooms.length > 0) {
     const vertexSnap = snapToVertex(point, existingRooms);
     if (vertexSnap.snapped) {
       return vertexSnap;
     }
   }
 
-  // Priority 2: Snap to existing room edges
-  if (existingRooms && existingRooms.length > 0) {
+  // Non-drawing modes: Priority 2: Snap to existing room edges
+  if (!isDrawingMode && existingRooms && existingRooms.length > 0) {
     const edgeSnap = snapToEdge(point, existingRooms);
     if (edgeSnap.snapped) {
       return edgeSnap;
     }
   }
 
-  // Priority 3: Orthogonal snap
+  // Priority 3 (both modes): Orthogonal snap
   if (orthogonalEnabled && lastVertex) {
     const orthogonalSnap = snapOrthogonal(point, lastVertex, allVertices, zoom);
     if (orthogonalSnap.snapped) {
@@ -304,7 +454,7 @@ export function snapWithPriority(
     }
   }
 
-  // Priority 4: Grid snap
+  // Priority 4 (both modes): Grid snap
   if (gridEnabled) {
     return snapToGrid(point, gridSize);
   }

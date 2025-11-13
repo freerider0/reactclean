@@ -918,7 +918,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             viewport.zoom,
             false,
             config.snapEnabled,
-            rooms
+            rooms,
+            true  // isDrawingMode
           );
           const firstVertex = snapResult.position || worldPoint;
           startDrawing();
@@ -959,7 +960,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             viewport.zoom,
             config.orthogonalSnapEnabled ?? false,
             config.snapEnabled,
-            rooms
+            rooms,
+            true  // isDrawingMode
           );
           const snapPos = snapResult.position || worldPoint;
 
@@ -1369,7 +1371,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           viewport.zoom,
           config.orthogonalSnapEnabled ?? false, // orthogonalEnabled
           config.snapEnabled,
-          rooms
+          rooms,
+          true  // isDrawingMode
         );
 
         setCurrentMouseWorld(worldPoint);
