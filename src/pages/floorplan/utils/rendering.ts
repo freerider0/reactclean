@@ -151,17 +151,13 @@ export function drawApertures(
   room: Room,
   viewport: Viewport
 ): void {
-  if (!room.walls || room.walls.length === 0) {
-    console.log('🚪 drawApertures: No walls in room', room.id);
-    return;
-  }
+  if (!room.walls || room.walls.length === 0) return;
 
   ctx.save();
 
   // Get vertices (use room vertices - the inner edge)
   const sourceVertices = room.vertices;
   if (!sourceVertices || sourceVertices.length < 3) {
-    console.log('🚪 drawApertures: Invalid vertices for room', room.id);
     ctx.restore();
     return;
   }
@@ -171,19 +167,9 @@ export function drawApertures(
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
-  // Count total apertures
-  let totalApertures = 0;
-  room.walls.forEach(w => totalApertures += (w.apertures?.length || 0));
-
-  if (totalApertures > 0) {
-    console.log(`🚪 drawApertures: Room ${room.id} has ${totalApertures} apertures across ${room.walls.length} walls`);
-  }
-
   // Draw apertures for each wall
   room.walls.forEach((wall, wallIndex) => {
     if (!wall.apertures || wall.apertures.length === 0) return;
-
-    console.log(`  └─ Wall ${wallIndex}: ${wall.apertures.length} aperture(s)`);
 
     // Get wall quad vertices
     const [inner1, inner2] = getWallQuad(wall, worldVertices);
@@ -258,13 +244,6 @@ export function drawApertures(
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-
-      console.log(`     └─ ${aperture.type} drawn at screen coords:`, {
-        start: `(${Math.round(screenRoomEdgeStart.x)}, ${Math.round(screenRoomEdgeStart.y)})`,
-        end: `(${Math.round(screenRoomEdgeEnd.x)}, ${Math.round(screenRoomEdgeEnd.y)})`,
-        width: `${Math.round(apertureWidthPx)}px`,
-        depth: `${apertureDepth}cm`
-      });
     }
   });
 
@@ -1717,6 +1696,131 @@ export function drawRoomSnapIndicators(
 
     ctx.shadowBlur = 0;
   }
+
+  ctx.restore();
+}
+
+/**
+ * Draw door centers as visual debug markers
+ * Shows where door centers are positioned for alignment debugging
+ */
+export function drawDoorCenters(
+  ctx: CanvasRenderingContext2D,
+  rooms: Room[],
+  viewport: Viewport,
+  movingRoomId?: string,
+  stationaryRoomId?: string,
+  movingRoomOffset?: Vertex
+): void {
+  ctx.save();
+
+  // Helper to calculate door center in world coordinates
+  const getDoorCenter = (room: Room, wallIndex: number, aperture: any, offset: Vertex = { x: 0, y: 0 }): Vertex | null => {
+    if (!room.vertices || room.vertices.length < 3) return null;
+
+    // Get wall start and end vertices (floor polygon geometry)
+    const v1 = room.vertices[wallIndex];
+    const v2 = room.vertices[(wallIndex + 1) % room.vertices.length];
+
+    if (!v1 || !v2) return null;
+
+    // Calculate wall length in local coordinates
+    const wallDx = v2.x - v1.x;
+    const wallDy = v2.y - v1.y;
+    const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+    if (wallLength < 0.001) return null;
+
+    // Calculate door center position along wall
+    // aperture.distance and width are in METERS, convert to pixels (*100)
+    let absolutePos: number;
+    if (aperture.anchorVertex === 'start') {
+      absolutePos = aperture.distance * 100 + (aperture.width * 100) / 2;
+    } else {
+      absolutePos = wallLength - aperture.distance * 100 - (aperture.width * 100) / 2;
+    }
+
+    // Parametric position along wall [0,1]
+    const t = absolutePos / wallLength;
+
+    // Interpolate in local coordinates (this is on the inner edge)
+    const localCenterInner: Vertex = {
+      id: 'door_center',
+      x: v1.x + (v2.x - v1.x) * t,
+      y: v1.y + (v2.y - v1.y) * t
+    };
+
+    // Offset outward by half wall thickness to get centerline position
+    const wallThickness = room.walls[wallIndex]?.thickness || 20;
+    const normalX = wallDy / wallLength;   // Perpendicular to wall (outward) - matches aperture drawing
+    const normalY = -wallDx / wallLength;
+
+    const localCenter: Vertex = {
+      id: 'door_center',
+      x: localCenterInner.x + normalX * (wallThickness / 2),
+      y: localCenterInner.y + normalY * (wallThickness / 2)
+    };
+
+    // Transform to world coordinates
+    const worldCenter = localToWorld(localCenter, room.position, room.rotation, room.scale);
+
+    // Apply offset
+    return {
+      id: worldCenter.id,
+      x: worldCenter.x + offset.x,
+      y: worldCenter.y + offset.y
+    };
+  };
+
+  // Draw door centers for each room
+  rooms.forEach(room => {
+    if (!room.walls || room.walls.length === 0) return;
+
+    const isMovingRoom = movingRoomId && room.id === movingRoomId;
+    const isStationaryRoom = stationaryRoomId && room.id === stationaryRoomId;
+
+    // Only draw for moving or stationary rooms
+    if (!isMovingRoom && !isStationaryRoom) return;
+
+    // Determine color and offset
+    const color = isMovingRoom ? '#d946ef' : '#0dcaf0'; // Magenta for moving, cyan for stationary
+    const offset = isMovingRoom && movingRoomOffset ? movingRoomOffset : { x: 0, y: 0 };
+
+    // Iterate through all walls
+    room.walls.forEach((wall, wallIndex) => {
+      if (!wall.apertures || wall.apertures.length === 0) return;
+
+      // Draw each door's center
+      wall.apertures.forEach(aperture => {
+        if (aperture.type !== 'door') return; // Only doors, not windows
+
+        const doorCenter = getDoorCenter(room, wallIndex, aperture, offset);
+        if (!doorCenter) return;
+
+        const screenCenter = worldToScreen(doorCenter, viewport);
+
+        // Draw door center marker
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        ctx.arc(screenCenter.x, screenCenter.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw small cross in center for precision
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(screenCenter.x - 5, screenCenter.y);
+        ctx.lineTo(screenCenter.x + 5, screenCenter.y);
+        ctx.moveTo(screenCenter.x, screenCenter.y - 5);
+        ctx.lineTo(screenCenter.x, screenCenter.y + 5);
+        ctx.stroke();
+      });
+    });
+  });
 
   ctx.restore();
 }

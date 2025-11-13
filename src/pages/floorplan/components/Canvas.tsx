@@ -24,6 +24,7 @@ import {
   drawRotationHandle,
   drawDimensionLabels,
   drawRoomSnapIndicators,
+  drawDoorCenters,
   drawConstraintIndicators,
   drawCenterlineVertexNumbers,
   drawContractedEnvelopeVertexNumbers,
@@ -668,6 +669,18 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     // Draw room joining snap indicators (in assembly mode during drag)
     if (editorMode === EditorMode.Assembly && lastSnapResult) {
       drawRoomSnapIndicators(ctx, lastSnapResult.current, viewport);
+
+      // Draw door centers for debugging alignment
+      if (lastSnapResult.current?.movingRoomId && lastSnapResult.current?.stationaryRoomId) {
+        drawDoorCenters(
+          ctx,
+          rooms,
+          viewport,
+          lastSnapResult.current.movingRoomId,
+          lastSnapResult.current.stationaryRoomId,
+          { x: 0, y: 0 } // Room position already includes drag offset
+        );
+      }
     }
   }, [
     rooms,

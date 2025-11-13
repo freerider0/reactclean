@@ -6,7 +6,7 @@
  * - edge-only: Rotate + translate to make walls colinear
  */
 
-import { Vertex, Room } from '../types';
+import { Vertex, Room, Aperture } from '../types';
 import { localToWorld } from './coordinates';
 
 // Thresholds
@@ -159,8 +159,8 @@ function lineIntersection(
  * Get room segments from centerline
  */
 function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
-  // Use stored centerline vertices
-  const centerline = room.centerlineVertices;
+  // Use room.vertices (actual walls) so edgeIndex matches walls array and doors can be found
+  const centerline = room.vertices;
 
   // Transform to world coordinates
   const worldVertices = centerline.map(v =>
@@ -173,7 +173,7 @@ function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
     y: v.y + offset.y
   }));
 
-  // Create segments with edge index tracking
+  // Create segments
   const segments: LineSegment[] = [];
   for (let i = 0; i < offsetVertices.length; i++) {
     const next = (i + 1) % offsetVertices.length;
@@ -382,7 +382,11 @@ function calculateTransformation(
   mode: 'edge-vertex' | 'vertex-only' | 'edge-only',
   segmentPair: SegmentPair,
   movingRoom: Room,
-  currentOffset: Vertex
+  currentOffset: Vertex,
+  doorCenters?: {
+    moving: Vertex;
+    stationary: Vertex;
+  }
 ): { rotation: number; translation: Vertex } {
   const center = {
     x: movingRoom.position.x + currentOffset.x,
@@ -391,81 +395,102 @@ function calculateTransformation(
 
   switch (mode) {
     case 'edge-vertex': {
-      // Rotate to align edges, then translate to snap vertices
+      // Rotate to align edges
       const rotation = alignAngles(segmentPair.moving, segmentPair.stationary);
 
-      // Apply rotation to find closest vertices
-      const rotatedP1 = rotatePoint(segmentPair.moving.p1, rotation, center);
-      const rotatedP2 = rotatePoint(segmentPair.moving.p2, rotation, center);
-
-      const d1 = pointDistance(rotatedP1, segmentPair.stationary.p1);
-      const d2 = pointDistance(rotatedP1, segmentPair.stationary.p2);
-      const d3 = pointDistance(rotatedP2, segmentPair.stationary.p1);
-      const d4 = pointDistance(rotatedP2, segmentPair.stationary.p2);
-
-      const minDist = Math.min(d1, d2, d3, d4);
-      let translation = currentOffset;
-
-      if (minDist === d1) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p1.x - rotatedP1.x),
-          y: currentOffset.y + (segmentPair.stationary.p1.y - rotatedP1.y)
+      // Use door centers if provided, otherwise use wall vertices
+      if (doorCenters) {
+        // Door-based alignment: rotate door center, then align with stationary door
+        const rotatedDoorCenter = rotatePoint(doorCenters.moving, rotation, center);
+        const translation = {
+          x: currentOffset.x + (doorCenters.stationary.x - rotatedDoorCenter.x),
+          y: currentOffset.y + (doorCenters.stationary.y - rotatedDoorCenter.y)
         };
-      } else if (minDist === d2) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p2.x - rotatedP1.x),
-          y: currentOffset.y + (segmentPair.stationary.p2.y - rotatedP1.y)
-        };
-      } else if (minDist === d3) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p1.x - rotatedP2.x),
-          y: currentOffset.y + (segmentPair.stationary.p1.y - rotatedP2.y)
-        };
+        return { rotation, translation };
       } else {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p2.x - rotatedP2.x),
-          y: currentOffset.y + (segmentPair.stationary.p2.y - rotatedP2.y)
-        };
-      }
+        // Standard vertex-based alignment
+        const rotatedP1 = rotatePoint(segmentPair.moving.p1, rotation, center);
+        const rotatedP2 = rotatePoint(segmentPair.moving.p2, rotation, center);
 
-      return { rotation, translation };
+        const d1 = pointDistance(rotatedP1, segmentPair.stationary.p1);
+        const d2 = pointDistance(rotatedP1, segmentPair.stationary.p2);
+        const d3 = pointDistance(rotatedP2, segmentPair.stationary.p1);
+        const d4 = pointDistance(rotatedP2, segmentPair.stationary.p2);
+
+        const minDist = Math.min(d1, d2, d3, d4);
+        let translation = currentOffset;
+
+        if (minDist === d1) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p1.x - rotatedP1.x),
+            y: currentOffset.y + (segmentPair.stationary.p1.y - rotatedP1.y)
+          };
+        } else if (minDist === d2) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p2.x - rotatedP1.x),
+            y: currentOffset.y + (segmentPair.stationary.p2.y - rotatedP1.y)
+          };
+        } else if (minDist === d3) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p1.x - rotatedP2.x),
+            y: currentOffset.y + (segmentPair.stationary.p1.y - rotatedP2.y)
+          };
+        } else {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p2.x - rotatedP2.x),
+            y: currentOffset.y + (segmentPair.stationary.p2.y - rotatedP2.y)
+          };
+        }
+
+        return { rotation, translation };
+      }
     }
 
     case 'vertex-only': {
-      // No rotation, just translate to snap closest vertices
-      const { movingVertexDistances } = segmentPair;
-      const minDist = Math.min(
-        movingVertexDistances.p1p1,
-        movingVertexDistances.p1p2,
-        movingVertexDistances.p2p1,
-        movingVertexDistances.p2p2
-      );
-
-      let translation = currentOffset;
-
-      if (minDist === movingVertexDistances.p1p1) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p1.x - segmentPair.moving.p1.x),
-          y: currentOffset.y + (segmentPair.stationary.p1.y - segmentPair.moving.p1.y)
+      // No rotation, just translate to snap closest vertices/doors
+      if (doorCenters) {
+        // Door-based alignment: simple translation to align door centers
+        const translation = {
+          x: currentOffset.x + (doorCenters.stationary.x - doorCenters.moving.x),
+          y: currentOffset.y + (doorCenters.stationary.y - doorCenters.moving.y)
         };
-      } else if (minDist === movingVertexDistances.p1p2) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p2.x - segmentPair.moving.p1.x),
-          y: currentOffset.y + (segmentPair.stationary.p2.y - segmentPair.moving.p1.y)
-        };
-      } else if (minDist === movingVertexDistances.p2p1) {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p1.x - segmentPair.moving.p2.x),
-          y: currentOffset.y + (segmentPair.stationary.p1.y - segmentPair.moving.p2.y)
-        };
+        return { rotation: 0, translation };
       } else {
-        translation = {
-          x: currentOffset.x + (segmentPair.stationary.p2.x - segmentPair.moving.p2.x),
-          y: currentOffset.y + (segmentPair.stationary.p2.y - segmentPair.moving.p2.y)
-        };
-      }
+        // Standard vertex-based alignment
+        const { movingVertexDistances } = segmentPair;
+        const minDist = Math.min(
+          movingVertexDistances.p1p1,
+          movingVertexDistances.p1p2,
+          movingVertexDistances.p2p1,
+          movingVertexDistances.p2p2
+        );
 
-      return { rotation: 0, translation };
+        let translation = currentOffset;
+
+        if (minDist === movingVertexDistances.p1p1) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p1.x - segmentPair.moving.p1.x),
+            y: currentOffset.y + (segmentPair.stationary.p1.y - segmentPair.moving.p1.y)
+          };
+        } else if (minDist === movingVertexDistances.p1p2) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p2.x - segmentPair.moving.p1.x),
+            y: currentOffset.y + (segmentPair.stationary.p2.y - segmentPair.moving.p1.y)
+          };
+        } else if (minDist === movingVertexDistances.p2p1) {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p1.x - segmentPair.moving.p2.x),
+            y: currentOffset.y + (segmentPair.stationary.p1.y - segmentPair.moving.p2.y)
+          };
+        } else {
+          translation = {
+            x: currentOffset.x + (segmentPair.stationary.p2.x - segmentPair.moving.p2.x),
+            y: currentOffset.y + (segmentPair.stationary.p2.y - segmentPair.moving.p2.y)
+          };
+        }
+
+        return { rotation: 0, translation };
+      }
     }
 
     case 'edge-only': {
@@ -548,6 +573,87 @@ function normalizeAngle(angle: number): number {
 }
 
 /**
+ * Get all doors on a specific wall
+ * @param room - Room to check
+ * @param wallIndex - Index of the wall
+ * @returns Array of doors on that wall
+ */
+function getDoorsOnWall(room: Room, wallIndex: number): Aperture[] {
+  if (!room.walls || !room.walls[wallIndex] || !room.walls[wallIndex].apertures) {
+    return [];
+  }
+
+  const doors = room.walls[wallIndex].apertures.filter(ap => ap.type === 'door');
+  return doors;
+}
+
+/**
+ * Calculate door center position in world coordinates
+ * Uses the room's actual geometry vertices, not centerlines
+ */
+function getDoorCenterWorld(
+  room: Room,
+  wallIndex: number,
+  aperture: Aperture,
+  offset: Vertex = { x: 0, y: 0 }
+): Vertex | null {
+  if (!room.vertices || room.vertices.length < 3) return null;
+
+  // Get wall start and end vertices (floor polygon geometry)
+  const v1 = room.vertices[wallIndex];
+  const v2 = room.vertices[(wallIndex + 1) % room.vertices.length];
+
+  if (!v1 || !v2) return null;
+
+  // Calculate wall length in local coordinates
+  const wallDx = v2.x - v1.x;
+  const wallDy = v2.y - v1.y;
+  const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+  if (wallLength < 0.001) return null;
+
+  // Calculate door center position along wall
+  // aperture.distance and width are in METERS, convert to pixels (*100)
+  let absolutePos: number;
+  if (aperture.anchorVertex === 'start') {
+    absolutePos = aperture.distance * 100 + (aperture.width * 100) / 2;
+  } else {
+    absolutePos = wallLength - aperture.distance * 100 - (aperture.width * 100) / 2;
+  }
+
+  // Parametric position along wall [0,1]
+  const t = absolutePos / wallLength;
+
+  // Interpolate in local coordinates (this is on the inner edge)
+  const localCenterInner: Vertex = {
+    id: 'door_center',
+    x: v1.x + (v2.x - v1.x) * t,
+    y: v1.y + (v2.y - v1.y) * t
+  };
+
+  // Offset outward by half wall thickness to get centerline position
+  const wallThickness = room.walls[wallIndex]?.thickness || 20;
+  const normalX = wallDy / wallLength;   // Perpendicular to wall (outward) - matches aperture drawing
+  const normalY = -wallDx / wallLength;
+
+  const localCenter: Vertex = {
+    id: 'door_center',
+    x: localCenterInner.x + normalX * (wallThickness / 2),
+    y: localCenterInner.y + normalY * (wallThickness / 2)
+  };
+
+  // Transform to world coordinates
+  const worldCenter = localToWorld(localCenter, room.position, room.rotation, room.scale);
+
+  // Apply offset for moving rooms
+  return {
+    id: worldCenter.id,
+    x: worldCenter.x + offset.x,
+    y: worldCenter.y + offset.y
+  };
+}
+
+/**
  * Main snap function - finds best snap between moving room and all other rooms
  */
 export function snapRoomToRooms(
@@ -574,10 +680,59 @@ export function snapRoomToRooms(
     return { rotation: 0, translation: proposedOffset, snapped: false };
   }
 
-  // Find closest segment pair
+  // Find closest segment pair (these are the orange walls)
   const closestPair = findClosestSegmentPair(movingSegments, stationarySegments);
   if (!closestPair) {
     return { rotation: 0, translation: proposedOffset, snapped: false };
+  }
+
+  // Get all possible snap points: wall vertices + door centers
+  const movingPoints: Vertex[] = [closestPair.moving.p1, closestPair.moving.p2];
+  const stationaryPoints: Vertex[] = [closestPair.stationary.p1, closestPair.stationary.p2];
+
+  // Add door centers ONLY from the closest wall pair
+  if (closestPair.moving.room && closestPair.moving.edgeIndex !== undefined) {
+    const doors = getDoorsOnWall(closestPair.moving.room, closestPair.moving.edgeIndex);
+    for (const door of doors) {
+      const doorCenter = getDoorCenterWorld(closestPair.moving.room, closestPair.moving.edgeIndex, door, proposedOffset);
+      if (doorCenter) movingPoints.push(doorCenter);
+    }
+  }
+
+  if (closestPair.stationary.room && closestPair.stationary.edgeIndex !== undefined) {
+    const doors = getDoorsOnWall(closestPair.stationary.room, closestPair.stationary.edgeIndex);
+    for (const door of doors) {
+      const doorCenter = getDoorCenterWorld(closestPair.stationary.room, closestPair.stationary.edgeIndex, door);
+      if (doorCenter) stationaryPoints.push(doorCenter);
+    }
+  }
+
+  // Find closest point pair among ALL points (vertices + doors)
+  let doorCenters: { moving: Vertex; stationary: Vertex } | undefined;
+  let minPointDistance = Infinity;
+  let closestMovingPoint: Vertex | undefined;
+  let closestStationaryPoint: Vertex | undefined;
+
+  for (const mPoint of movingPoints) {
+    for (const sPoint of stationaryPoints) {
+      const dist = pointDistance(mPoint, sPoint);
+      if (dist < minPointDistance) {
+        minPointDistance = dist;
+        closestMovingPoint = mPoint;
+        closestStationaryPoint = sPoint;
+      }
+    }
+  }
+
+  // Use door centers if the closest pair is within threshold and not wall vertices
+  if (closestMovingPoint && closestStationaryPoint && minPointDistance < VERTEX_THRESHOLD) {
+    const isMovingDoor = closestMovingPoint !== closestPair.moving.p1 && closestMovingPoint !== closestPair.moving.p2;
+    const isStationaryDoor = closestStationaryPoint !== closestPair.stationary.p1 && closestStationaryPoint !== closestPair.stationary.p2;
+
+    if (isMovingDoor || isStationaryDoor) {
+      doorCenters = { moving: closestMovingPoint, stationary: closestStationaryPoint };
+      console.log('🚪 DOOR SNAP:', minPointDistance.toFixed(1), 'px');
+    }
   }
 
   // Check if walls are opposite
@@ -594,7 +749,12 @@ export function snapRoomToRooms(
   const isOppositeWalls = oppositeAngleDiff <= (ANGLE_TOLERANCE * Math.PI / 180);
 
   // Determine snap mode
-  const snapMode = calculateSnapMode(closestPair, isOppositeWalls);
+  let snapMode = calculateSnapMode(closestPair, isOppositeWalls);
+
+  // Door-to-door takes absolute priority - override any mode
+  if (doorCenters) {
+    snapMode = 'edge-vertex'; // Align walls + snap door centers
+  }
 
   if (snapMode === 'none') {
     return { rotation: 0, translation: proposedOffset, snapped: false };
@@ -680,17 +840,22 @@ export function snapRoomToRooms(
     };
   }
 
-  // Calculate and return transformation
+  // Calculate and return transformation (use door centers if available)
   const transformation = calculateTransformation(
     snapMode,
     closestPair,
     movingRoom,
-    proposedOffset
+    proposedOffset,
+    doorCenters
   );
 
   return {
     ...transformation,
     snapped: true,
-    mode: snapMode
+    mode: snapMode,
+    movingRoomId: closestPair.moving.room?.id,
+    stationaryRoomId: closestPair.stationary.room?.id,
+    movingSegmentWorld: { p1: closestPair.moving.p1, p2: closestPair.moving.p2 },
+    stationarySegmentWorld: { p1: closestPair.stationary.p1, p2: closestPair.stationary.p2 }
   };
 }

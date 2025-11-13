@@ -305,8 +305,63 @@ function lineIntersection(
 }
 
 /**
+ * Calculate intersection between a line segment (extended by a fixed amount) and another segment
+ * @param p1 - Start of first segment
+ * @param p2 - End of first segment
+ * @param segmentLength - Length of first segment
+ * @param extension - How much to extend the first segment on each side (in cm)
+ * @param p3 - Start of second segment
+ * @param p4 - End of second segment
+ * Returns null if lines are parallel or intersection is outside extended range
+ */
+function lineIntersectionWithExtension(
+  p1: Vertex,
+  p2: Vertex,
+  segmentLength: number,
+  extension: number,
+  p3: Vertex,
+  p4: Vertex
+): Vertex | null {
+  const x1 = p1.x, y1 = p1.y;
+  const x2 = p2.x, y2 = p2.y;
+  const x3 = p3.x, y3 = p3.y;
+  const x4 = p4.x, y4 = p4.y;
+
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+
+  // Lines are parallel or coincident
+  if (Math.abs(denom) < 0.0001) {
+    return null;
+  }
+
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+  // Check if intersection is on second segment
+  if (u < 0 || u > 1) {
+    return null;
+  }
+
+  // Check if intersection is within extended range of first segment
+  // t = 0 is at p1, t = 1 is at p2
+  // Convert extension from cm to parametric units
+  const extensionT = extension / segmentLength;
+  const minT = -extensionT;
+  const maxT = 1 + extensionT;
+
+  if (t < minT || t > maxT) {
+    return null;
+  }
+
+  return {
+    x: x1 + t * (x2 - x1),
+    y: y1 + t * (y2 - y1)
+  };
+}
+
+/**
  * Snap to yellow line edge intersections when drawing
- * Extends edges of EXISTING rooms infinitely, intersects with yellow line segments
+ * Extends edges of EXISTING rooms by 50cm, intersects with yellow line segments
  */
 function snapToYellowLineIntersections(
   point: Vertex,
@@ -314,6 +369,7 @@ function snapToYellowLineIntersections(
   rooms: Room[]
 ): SnapResult {
   const INTERSECTION_SNAP_THRESHOLD = 15;
+  const EDGE_EXTENSION = 50; // Extend edges by 50cm
 
   const allIntersections: Vertex[] = [];
 
@@ -331,6 +387,13 @@ function snapToYellowLineIntersections(
       const edgeStart = worldVertices[i];
       const edgeEnd = worldVertices[(i + 1) % worldVertices.length];
 
+      // Calculate edge length for extension constraint
+      const edgeDx = edgeEnd.x - edgeStart.x;
+      const edgeDy = edgeEnd.y - edgeStart.y;
+      const edgeLength = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy);
+
+      if (edgeLength < 0.001) continue;
+
       // Check intersections with all yellow lines (including this room's yellow line)
       for (const otherRoom of rooms) {
         if (!otherRoom.innerBoundaryVertices || otherRoom.innerBoundaryVertices.length < 3) continue;
@@ -345,10 +408,10 @@ function snapToYellowLineIntersections(
           const yellowStart = worldYellowLine[j];
           const yellowEnd = worldYellowLine[(j + 1) % worldYellowLine.length];
 
-          // Find intersection: existing room edge extended infinitely, yellow edge as segment
-          const intersection = lineIntersection(
-            edgeStart, edgeEnd,        // Existing room edge (extended infinitely)
-            yellowStart, yellowEnd      // Yellow line edge (segment only)
+          // Find intersection with constraint: edge extended by 50cm on each side
+          const intersection = lineIntersectionWithExtension(
+            edgeStart, edgeEnd, edgeLength, EDGE_EXTENSION,
+            yellowStart, yellowEnd
           );
 
           if (intersection) {
