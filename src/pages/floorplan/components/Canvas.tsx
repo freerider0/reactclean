@@ -280,12 +280,6 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment);
     });
 
-    // Draw apertures (doors/windows) on top of walls
-    // Must be drawn after envelope to be visible on black outer walls
-    rooms.forEach(room => {
-      drawApertures(ctx, room, viewport);
-    });
-
     // Draw aperture ghost preview (when dragging in edit mode)
     if (editorMode === EditorMode.Edit && editDragState.current.dragType === 'aperture' &&
         editDragState.current.isDragging && editDragState.current.targetWallIndex !== null &&
@@ -665,6 +659,11 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
       drawWallSegmentVertices(ctx, rooms, viewport);
     }
+
+    // Draw apertures (doors/windows) on top of segments so they're always visible
+    rooms.forEach(room => {
+      drawApertures(ctx, room, viewport);
+    });
 
     // Draw room joining snap indicators (in assembly mode during drag)
     if (editorMode === EditorMode.Assembly && lastSnapResult) {
