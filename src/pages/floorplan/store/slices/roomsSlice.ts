@@ -8,6 +8,7 @@ import type { Room, Constraint, ConstraintType } from '../../types';
 import { calculateFloorplanEnvelopes } from '../../utils/geometry';
 import { calculateCenterline } from '../../utils/roomJoining';
 import { solveRoom, calculateDOF, isOverConstrained } from '../../utils/constraintSolver';
+import { calculateWallSegmentsForAllRooms } from '../../utils/wallSegments';
 
 export const createRoomsSlice: StateCreator<
   FloorplanStore,
@@ -659,6 +660,57 @@ export const createRoomsSlice: StateCreator<
           console.log(`  ↻ Recalculated centerline: ${freshRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
         }
       });
+
+      // Extract and store global contracted envelopes (one per room group)
+      // Deduplicate by converting to world coordinates and comparing
+      const contractedEnvelopesWorld: Vertex[][] = [];
+      const seen = new Set<string>();
+
+      currentRooms.forEach(room => {
+        const freshRoom = state.rooms.get(room.id);
+        if (!freshRoom || !freshRoom.debugContractedEnvelope) return;
+
+        // Convert contracted envelope to world coordinates
+        const worldEnvelope = freshRoom.debugContractedEnvelope.map(v => ({
+          id: v.id,
+          x: (v.x * Math.cos(freshRoom.rotation) - v.y * Math.sin(freshRoom.rotation)) * freshRoom.scale + freshRoom.position.x,
+          y: (v.x * Math.sin(freshRoom.rotation) + v.y * Math.cos(freshRoom.rotation)) * freshRoom.scale + freshRoom.position.y
+        }));
+
+        // Create a signature for this envelope (first 3 points rounded to avoid duplicates)
+        const signature = worldEnvelope
+          .slice(0, Math.min(3, worldEnvelope.length))
+          .map(v => `${v.x.toFixed(1)},${v.y.toFixed(1)}`)
+          .join('|');
+
+        if (!seen.has(signature)) {
+          seen.add(signature);
+          contractedEnvelopesWorld.push(worldEnvelope);
+        }
+      });
+
+      state.contractedEnvelopes = contractedEnvelopesWorld;
+      console.log(`📐 Extracted ${contractedEnvelopesWorld.length} unique contracted envelope(s)`);
+
+      // Calculate wall segments based on contracted envelope intersections
+      if (contractedEnvelopesWorld.length > 0) {
+        console.log('🔷 Calculating wall segments...');
+        const roomsWithSegments = calculateWallSegmentsForAllRooms(
+          currentRooms,
+          contractedEnvelopesWorld
+        );
+
+        // Update rooms with calculated segments
+        roomsWithSegments.forEach(updatedRoom => {
+          const freshRoom = state.rooms.get(updatedRoom.id);
+          if (freshRoom) {
+            freshRoom.walls = updatedRoom.walls;
+            const totalSegments = updatedRoom.walls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
+            console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
+          }
+        });
+        console.log('✨ Wall segments calculated');
+      }
 
       state.isCalculatingEnvelopes = false;
     });

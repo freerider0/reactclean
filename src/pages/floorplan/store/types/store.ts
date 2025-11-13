@@ -84,6 +84,10 @@ export interface SelectionSlice {
   setHoverVertex: (index: number | null) => void;
   setHoverEdge: (index: number | null) => void;
   setHoverAperture: (apertureId: string | null, wallIndex: number | null) => void;
+  // Segment selection actions
+  selectSegment: (roomId: string, wallIndex: number, segmentIndex: number) => void;
+  clearSegmentSelection: () => void;
+  setHoverSegment: (selection: { roomId: string; wallIndex: number; segmentIndex: number } | null) => void;
   // Diagonal constraint mode actions
   startDiagonalConstraintMode: () => void;
   addDiagonalVertex: (index: number) => void;
@@ -191,6 +195,9 @@ export interface FloorplanStore extends
 
   // Geo-reference
   geoReference: GeoReference | null;
+
+  // Contracted envelopes (one per room group)
+  contractedEnvelopes: Vertex[][];
 
   // Keyboard state
   spacePressed: boolean;

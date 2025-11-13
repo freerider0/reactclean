@@ -6,6 +6,63 @@ import { Vertex, Room, HitTestResult } from '../types';
 import { distance, distanceToSegment, pointInPolygon } from './geometry';
 import { localToWorld } from './coordinates';
 import { getRotationHandlePosition, calculateRoomCenter } from './rotation';
+import type { FloorplanStore } from '../store/types/store';
+
+/**
+ * Comprehensive hit test result containing ALL clickable elements
+ */
+export interface ComprehensiveHitTestResult {
+  // Room interior (point-in-polygon test)
+  room: {
+    roomId: string;
+  } | null;
+
+  // Vertex hit (highest priority for editing)
+  vertex: {
+    roomId: string;
+    vertexId: string;
+    vertexIndex: number;
+    worldPosition: { x: number; y: number };
+  } | null;
+
+  // Closest edge across all rooms (for snapping/alignment)
+  closestEdge: {
+    roomId: string;
+    wallIndex: number;
+    distance: number;
+    edgeStart: { x: number; y: number };
+    edgeEnd: { x: number; y: number };
+  } | null;
+
+  // Closest segment on closest edge
+  closestSegment: {
+    roomId: string;
+    wallIndex: number;
+    segmentIndex: number;
+    distance: number;
+    segmentType: 'exterior' | 'interior';
+  } | null;
+
+  // Aperture (door/window)
+  aperture: {
+    roomId: string;
+    wallIndex: number;
+    apertureId: string;
+    apertureType: 'door' | 'window';
+  } | null;
+
+  // Outer wall area (thick wall between envelope and interior)
+  outerWall: {
+    roomId: string;
+    wallIndex: number;
+  } | null;
+
+  // Rotation handle
+  rotationHandle: {
+    roomId: string;
+    handlePosition: { x: number; y: number };
+  } | null;
+}
 
 // Hit test thresholds (in screen pixels)
 const VERTEX_HIT_THRESHOLD = 20; // Larger for touch-friendly interaction
@@ -328,6 +385,105 @@ export function hitTestRotationHandle(
 }
 
 /**
+ * Hit test wall segments (for wall type assignment)
+ * Returns { wallIndex, segmentIndex } if hit, or null if no hit
+ */
+export function hitTestRoomWallSegments(
+  worldPoint: Vertex,
+  room: Room
+): { wallIndex: number; segmentIndex: number; distance: number } | null {
+  // Check if point is inside the envelope (outer walls area)
+  if (!room.envelopeVertices || room.envelopeVertices.length === 0) return null;
+
+  const worldEnvelope = room.envelopeVertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  const worldRoomVertices = room.vertices.map(v =>
+    localToWorld(v, room.position, room.rotation, room.scale)
+  );
+
+  // Check if point is in envelope but not in room interior (i.e., in the wall area)
+  const inEnvelope = pointInPolygon(worldPoint, worldEnvelope);
+  const inRoom = pointInPolygon(worldPoint, worldRoomVertices);
+
+  if (!inEnvelope || inRoom) {
+    // Not in wall area
+    return null;
+  }
+
+  // Point is in wall area - find which wall and segment
+  let closestWallIndex = -1;
+  let closestSegmentIndex = -1;
+  let minDistance = Infinity;
+
+  const n = room.vertices.length;
+
+  // Build segmentVertex lookup map if available
+  const segmentVertexMap = room.segmentVertices
+    ? new Map(room.segmentVertices.map(v => [v.id, v]))
+    : null;
+
+  for (let wallIndex = 0; wallIndex < room.walls.length; wallIndex++) {
+    const wall = room.walls[wallIndex];
+
+    // Skip walls without segments
+    if (!wall.segments || wall.segments.length === 0) continue;
+    if (wallIndex >= n) continue;
+
+    // Check each segment directly using segmentVertices
+    if (segmentVertexMap && room.segmentVertices) {
+      for (let segmentIndex = 0; segmentIndex < wall.segments.length; segmentIndex++) {
+        const segment = wall.segments[segmentIndex];
+
+        // Look up segment vertices
+        const segStartLocal = segmentVertexMap.get(segment.startVertexId);
+        const segEndLocal = segmentVertexMap.get(segment.endVertexId);
+
+        if (!segStartLocal || !segEndLocal) continue;
+
+        // Transform to world coordinates
+        const segStart = localToWorld(segStartLocal, room.position, room.rotation, room.scale);
+        const segEnd = localToWorld(segEndLocal, room.position, room.rotation, room.scale);
+
+        // Calculate segment direction and length
+        const segDx = segEnd.x - segStart.x;
+        const segDy = segEnd.y - segStart.y;
+        const segLength = Math.sqrt(segDx * segDx + segDy * segDy);
+
+        if (segLength < 0.001) continue;
+
+        // Project click point onto segment
+        const pointDx = worldPoint.x - segStart.x;
+        const pointDy = worldPoint.y - segStart.y;
+        const projection = (pointDx * segDx + pointDy * segDy) / (segLength * segLength);
+        const t = Math.max(0, Math.min(1, projection)); // Clamp to [0, 1]
+
+        // Calculate perpendicular distance from point to segment
+        const closestX = segStart.x + t * segDx;
+        const closestY = segStart.y + t * segDy;
+        const perpDist = Math.sqrt(
+          (worldPoint.x - closestX) ** 2 + (worldPoint.y - closestY) ** 2
+        );
+
+        // If this segment is closer than previous best
+        if (perpDist < minDistance) {
+          minDistance = perpDist;
+          closestWallIndex = wallIndex;
+          closestSegmentIndex = segmentIndex;
+        }
+      }
+    }
+  }
+
+  if (closestWallIndex !== -1 && closestSegmentIndex !== -1) {
+    return { wallIndex: closestWallIndex, segmentIndex: closestSegmentIndex, distance: minDistance };
+  }
+
+  return null;
+}
+
+/**
  * Hit test apertures (doors and windows) in a room
  * Returns { wallIndex, apertureId } if hit, or null if no hit
  */
@@ -439,4 +595,146 @@ export function hitTestApertures(
   }
 
   return null;
+}
+
+/**
+ * Perform comprehensive hit testing on all clickable elements
+ * Returns a single structured object with ALL hit data
+ */
+export function performHitTest(
+  worldPoint: Vertex,
+  state: Pick<FloorplanStore, 'rooms' | 'viewport' | 'selection'>
+): ComprehensiveHitTestResult {
+  const rooms = Array.from(state.rooms.values());
+  const zoom = state.viewport.zoom;
+
+  const result: ComprehensiveHitTestResult = {
+    room: null,
+    vertex: null,
+    closestEdge: null,
+    closestSegment: null,
+    aperture: null,
+    outerWall: null,
+    rotationHandle: null
+  };
+
+  // Test vertices across all rooms (highest priority)
+  for (const room of rooms) {
+    const vertexIndex = hitTestRoomVertices(worldPoint, room, VERTEX_HIT_THRESHOLD, zoom);
+    if (vertexIndex !== -1) {
+      const vertex = room.vertices[vertexIndex];
+      const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
+      result.vertex = {
+        roomId: room.id,
+        vertexId: vertex.id,
+        vertexIndex,
+        worldPosition: worldVertex
+      };
+      break; // Take first vertex hit
+    }
+  }
+
+  // Test rotation handles (only for selected rooms)
+  if (state.selection.selectedRoomIds.length > 0) {
+    for (const roomId of state.selection.selectedRoomIds) {
+      const room = state.rooms.get(roomId);
+      if (room && hitTestRotationHandle(worldPoint, room)) {
+        const center = calculateRoomCenter(room.vertices, room.position);
+        const handlePos = getRotationHandlePosition(center, room.rotation, 80);
+        result.rotationHandle = {
+          roomId: room.id,
+          handlePosition: handlePos
+        };
+        break;
+      }
+    }
+  }
+
+  // Test apertures across all rooms
+  for (const room of rooms) {
+    const apertureHit = hitTestApertures(worldPoint, room);
+    if (apertureHit) {
+      const wall = room.walls[apertureHit.wallIndex];
+      const aperture = wall.apertures?.find(a => a.id === apertureHit.apertureId);
+      if (aperture) {
+        result.aperture = {
+          roomId: room.id,
+          wallIndex: apertureHit.wallIndex,
+          apertureId: apertureHit.apertureId,
+          apertureType: aperture.type
+        };
+        break; // Take first aperture hit
+      }
+    }
+  }
+
+  // Find globally closest edge across all rooms
+  let minEdgeDistance = Infinity;
+  for (const room of rooms) {
+    const worldVertices = room.vertices.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+
+    for (let i = 0; i < worldVertices.length; i++) {
+      const v1 = worldVertices[i];
+      const v2 = worldVertices[(i + 1) % worldVertices.length];
+      const { distance: dist } = distanceToSegment(worldPoint, v1, v2);
+
+      if (dist < minEdgeDistance) {
+        minEdgeDistance = dist;
+        result.closestEdge = {
+          roomId: room.id,
+          wallIndex: i,
+          distance: dist,
+          edgeStart: v1,
+          edgeEnd: v2
+        };
+      }
+    }
+  }
+
+  // Find segment on closest edge (if edge found and distance reasonable)
+  if (result.closestEdge && result.closestEdge.distance < 50) {
+    const room = state.rooms.get(result.closestEdge.roomId);
+    if (room) {
+      const segmentHit = hitTestRoomWallSegments(worldPoint, room);
+      if (segmentHit && segmentHit.wallIndex === result.closestEdge.wallIndex) {
+        const wall = room.walls[segmentHit.wallIndex];
+        const segment = wall.segments?.[segmentHit.segmentIndex];
+        if (segment) {
+          result.closestSegment = {
+            roomId: room.id,
+            wallIndex: segmentHit.wallIndex,
+            segmentIndex: segmentHit.segmentIndex,
+            distance: segmentHit.distance,
+            segmentType: segment.type
+          };
+        }
+      }
+    }
+  }
+
+  // Test room interiors (point-in-polygon)
+  for (const room of rooms) {
+    if (hitTestRoom(worldPoint, room)) {
+      result.room = {
+        roomId: room.id
+      };
+      break; // Take first room hit (for overlapping cases)
+    }
+  }
+
+  // Test outer wall areas
+  for (const room of rooms) {
+    const wallIndex = hitTestRoomWalls(worldPoint, room);
+    if (wallIndex !== -1) {
+      result.outerWall = {
+        roomId: room.id,
+        wallIndex
+      };
+      break;
+    }
+  }
+
+  return result;
 }

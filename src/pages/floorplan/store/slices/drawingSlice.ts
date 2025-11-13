@@ -134,6 +134,7 @@ export const createDrawingSlice: StateCreator<
       name: `Room ${get().rooms.size + 1}`,
       vertices: centeredVertices,
       originalVertices: [...centeredVertices], // Store original vertices for merge reset
+      segmentVertices: [...centeredVertices], // Initialize with same vertices (will be populated with intersections after envelope calc)
       centerlineVertices,
       walls,
       position: centroid, // Position is the centroid

@@ -88,6 +88,9 @@ export const useFloorplanStore = create<FloorplanStore>()(
         // Geo-reference
         geoReference: null,
 
+        // Contracted envelopes (one per room group)
+        contractedEnvelopes: [],
+
         // Keyboard state
         spacePressed: false,
         shiftPressed: false,

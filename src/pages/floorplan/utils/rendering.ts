@@ -30,13 +30,15 @@ export function drawEnvelope(
   viewport: Viewport,
   snapSegmentWorld?: { p1: Vertex; p2: Vertex },
   isDragging: boolean = false,
-  showDebugLines: boolean = false
+  showDebugLines: boolean = false,
+  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
 ): void {
   if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
 
   ctx.save();
 
-  // When dragging, skip drawing the outer envelope polygon
+  // When not dragging, ALWAYS draw the outer envelope polygon (dark gray fill)
+  // This is the base layer - segments will be drawn on top
   if (!isDragging) {
     // Transform envelope vertices to world coordinates
     const worldEnvelope = room.envelopeVertices.map(v =>
@@ -80,10 +82,15 @@ export function drawEnvelope(
     ctx.setLineDash([]); // Reset dash
   }
 
-  // Only draw half-thickness walls when dragging (to show how they connect)
-  if (isDragging) {
+  // Draw walls (with segments if they exist)
+  // When dragging, always draw walls to show snap indicators
+  // When not dragging and has segments, draw walls to show segment colors ON TOP of the envelope
+  const hasSegments = room.walls.some(w => w.segments && w.segments.length > 0);
+
+  if (isDragging || hasSegments) {
     drawWalls(ctx, room, viewport, {
-      snapSegmentWorld
+      snapSegmentWorld,
+      selectedSegment
     });
   }
 
@@ -705,6 +712,7 @@ export function drawWalls(
     snapMode?: 'edge-vertex' | 'vertex-only' | 'edge-only';
     selectedWallIndex?: number | null;  // Wall index that is selected in Edit mode
     hoverWallIndex?: number | null;  // Wall index that is hovered in Edit mode
+    selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null;  // Selected segment in Assembly mode
   } = {}
 ): void {
   if (room.walls.length === 0) return;
@@ -771,6 +779,116 @@ export function drawWalls(
                         options.hoverWallIndex !== null &&
                         wallIndex === options.hoverWallIndex;
 
+    // If wall has segments, draw each segment separately with its own color
+    if (wall.segments && wall.segments.length > 0 && room.segmentVertices) {
+      // Build segmentVertex lookup map for O(1) access
+      const segmentVertexMap = new Map(
+        room.segmentVertices.map(v => [v.id, v])
+      );
+
+      wall.segments.forEach((segment, segmentIndex) => {
+        // Check if this segment is selected
+        const isSelectedSegment = options.selectedSegment &&
+                                   options.selectedSegment.roomId === room.id &&
+                                   options.selectedSegment.wallIndex === wallIndex &&
+                                   options.selectedSegment.segmentIndex === segmentIndex;
+
+        // Look up segment vertices by ID
+        const segStartLocal = segmentVertexMap.get(segment.startVertexId);
+        const segEndLocal = segmentVertexMap.get(segment.endVertexId);
+
+        if (!segStartLocal || !segEndLocal) {
+          console.warn(`Segment vertices not found for IDs: ${segment.startVertexId}, ${segment.endVertexId}`);
+          return;
+        }
+
+        // Transform to world coordinates
+        const segStart = localToWorld(segStartLocal, room.position, room.rotation, room.scale);
+        const segEnd = localToWorld(segEndLocal, room.position, room.rotation, room.scale);
+
+        // Create a temporary wall-like structure for this segment
+        const segmentWall = {
+          ...wall,
+          wallType: segment.wallType
+        };
+
+        // Get the edge vertices for this segment (use indices for getWallQuad)
+        const segmentVertices = [segStart, segEnd];
+
+        // Calculate wall quad for this segment
+        // We need to calculate the outer vertices based on wall thickness
+        const dx = segEnd.x - segStart.x;
+        const dy = segEnd.y - segStart.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length < 0.001) return; // Skip zero-length segments
+
+        const normalX = -dy / length;
+        const normalY = dx / length;
+        const halfThickness = wall.thickness / 2;
+
+        const outer1 = {
+          id: 'temp',
+          x: segStart.x + normalX * halfThickness,
+          y: segStart.y + normalY * halfThickness
+        };
+        const outer2 = {
+          id: 'temp',
+          x: segEnd.x + normalX * halfThickness,
+          y: segEnd.y + normalY * halfThickness
+        };
+
+        // Transform to screen coordinates
+        const screenInner1 = worldToScreen(segStart, viewport);
+        const screenInner2 = worldToScreen(segEnd, viewport);
+        const screenOuter1 = worldToScreen(outer1, viewport);
+        const screenOuter2 = worldToScreen(outer2, viewport);
+
+        // Choose color based on segment wall type
+        if (isSelectedSegment) {
+          // Selected segment - red with strong glow
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = '#ef4444';
+          ctx.fillStyle = '#ef4444';
+        } else if (isSelectedWall) {
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = '#3b82f6';
+          ctx.fillStyle = '#3b82f6';
+        } else if (isHoverWall) {
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = '#60a5fa';
+          ctx.fillStyle = '#60a5fa';
+        } else if (isSnapWall) {
+          ctx.shadowBlur = glowIntensity;
+          ctx.shadowColor = '#f59e0b';
+          ctx.fillStyle = '#f59e0b';
+        } else {
+          // Use segment wall type color
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = WALL_TYPE_COLORS[segment.wallType] || options.wallColor || '#94a3b8';
+        }
+
+        // Draw segment as filled quad
+        ctx.beginPath();
+        ctx.moveTo(screenInner1.x, screenInner1.y);
+        ctx.lineTo(screenInner2.x, screenInner2.y);
+        ctx.lineTo(screenOuter2.x, screenOuter2.y);
+        ctx.lineTo(screenOuter1.x, screenOuter1.y);
+        ctx.closePath();
+        ctx.fill();
+
+        // Draw segment outline - thicker and red if selected
+        ctx.shadowBlur = 0; // Remove shadow for stroke
+        ctx.strokeStyle = isSelectedSegment ? '#ef4444' : (options.selected ? '#3b82f6' : '#64748b');
+        ctx.lineWidth = isSelectedSegment ? 3 : 1;
+        ctx.stroke();
+      });
+
+      // Skip the regular wall drawing below for walls with segments
+      return;
+    }
+
+    // Regular wall drawing (no segments) - original code
     // Get wall quad vertices with mitered corners
     const [inner1, inner2, outer2, outer1] = getWallQuad(wall, worldVertices);
 
@@ -965,6 +1083,119 @@ export function drawEdgeHandles(
   }
 
   ctx.restore();
+}
+
+/**
+ * Draw contracted envelope vertices (green line vertices) plus collinear room vertices
+ * Collects all unique world positions and draws each once
+ */
+export function drawWallSegmentVertices(
+  ctx: CanvasRenderingContext2D,
+  allRooms: Room[],
+  viewport: Viewport
+): void {
+  ctx.save();
+
+  const vertexColor = '#f59e0b'; // Orange
+  const markerSize = 6;
+  const pointsToDrawSet = new Set<string>(); // Unique world positions
+  const pointsToDraw: Vertex[] = [];
+
+  // 1. Collect all contracted envelope vertices (in world coords)
+  allRooms.forEach(room => {
+    if (!room.debugContractedEnvelope || room.debugContractedEnvelope.length === 0) return;
+
+    room.debugContractedEnvelope.forEach(vertex => {
+      const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
+      const key = `${worldVertex.x.toFixed(1)},${worldVertex.y.toFixed(1)}`;
+
+      if (!pointsToDrawSet.has(key)) {
+        pointsToDrawSet.add(key);
+        pointsToDraw.push(worldVertex);
+      }
+    });
+  });
+
+  // 2. Collect contracted envelope edges for collinearity checking
+  const envelopeEdges: Array<{ p1: Vertex; p2: Vertex }> = [];
+  allRooms.forEach(room => {
+    if (!room.debugContractedEnvelope || room.debugContractedEnvelope.length === 0) return;
+
+    const envelopeWorld = room.debugContractedEnvelope.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+
+    for (let i = 0; i < envelopeWorld.length; i++) {
+      envelopeEdges.push({
+        p1: envelopeWorld[i],
+        p2: envelopeWorld[(i + 1) % envelopeWorld.length]
+      });
+    }
+  });
+
+  // 3. Check all room vertices for collinearity with envelope edges
+  allRooms.forEach(room => {
+    room.vertices.forEach(vertex => {
+      const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
+
+      for (const edge of envelopeEdges) {
+        if (isPointOnSegment(worldVertex, edge.p1, edge.p2, 5)) {
+          const key = `${worldVertex.x.toFixed(1)},${worldVertex.y.toFixed(1)}`;
+
+          if (!pointsToDrawSet.has(key)) {
+            pointsToDrawSet.add(key);
+            pointsToDraw.push(worldVertex);
+          }
+          break;
+        }
+      }
+    });
+  });
+
+  // 4. Draw all unique points
+  pointsToDraw.forEach(worldPos => {
+    const screenVertex = worldToScreen(worldPos, viewport);
+
+    ctx.fillStyle = vertexColor;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.arc(screenVertex.x, screenVertex.y, markerSize, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
+/**
+ * Check if a point lies on a line segment (within tolerance)
+ */
+function isPointOnSegment(point: Vertex, segStart: Vertex, segEnd: Vertex, tolerance: number): boolean {
+  // Calculate distance from point to segment
+  const dx = segEnd.x - segStart.x;
+  const dy = segEnd.y - segStart.y;
+  const lengthSquared = dx * dx + dy * dy;
+
+  if (lengthSquared < 0.0001) {
+    // Segment is a point
+    const dist = Math.hypot(point.x - segStart.x, point.y - segStart.y);
+    return dist < tolerance;
+  }
+
+  // Calculate projection parameter t
+  const t = Math.max(0, Math.min(1,
+    ((point.x - segStart.x) * dx + (point.y - segStart.y) * dy) / lengthSquared
+  ));
+
+  // Calculate closest point on segment
+  const projX = segStart.x + t * dx;
+  const projY = segStart.y + t * dy;
+
+  // Check distance
+  const dist = Math.hypot(point.x - projX, point.y - projY);
+  return dist < tolerance;
 }
 
 /**

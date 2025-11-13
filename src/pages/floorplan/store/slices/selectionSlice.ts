@@ -22,12 +22,14 @@ export const createSelectionSlice: StateCreator<
     selectedWallIndex: null,
     selectedApertureId: null,
     selectedApertureWallIndex: null,
+    selectedSegment: null,
     hoverRoomId: null,
     hoverVertexIndex: null,
     hoverEdgeIndex: null,
     hoverWallIndex: null,
     hoverApertureId: null,
     hoverApertureWallIndex: null,
+    hoverSegment: null,
     diagonalConstraintMode: false,
     diagonalVertices: [],
   },
@@ -192,12 +194,14 @@ export const createSelectionSlice: StateCreator<
         selectedWallIndex: null,
         selectedApertureId: null,
         selectedApertureWallIndex: null,
+        selectedSegment: null,
         hoverRoomId: state.selection.hoverRoomId,
         hoverVertexIndex: state.selection.hoverVertexIndex,
         hoverEdgeIndex: state.selection.hoverEdgeIndex,
         hoverWallIndex: state.selection.hoverWallIndex,
         hoverApertureId: state.selection.hoverApertureId,
         hoverApertureWallIndex: state.selection.hoverApertureWallIndex,
+        hoverSegment: state.selection.hoverSegment,
         diagonalConstraintMode: false,
         diagonalVertices: [],
       };
@@ -306,6 +310,39 @@ export const createSelectionSlice: StateCreator<
       state.selection.selectedWallIndex = null;
       state.selection.selectedApertureId = null;
       state.selection.selectedApertureWallIndex = null;
+    });
+  },
+
+  /**
+   * Select a wall segment
+   */
+  selectSegment: (roomId: string, wallIndex: number, segmentIndex: number) => {
+    set((state) => {
+      state.selection.selectedSegment = { roomId, wallIndex, segmentIndex };
+      // Clear other selections when selecting a segment
+      state.selection.selectedVertexIndex = null;
+      state.selection.selectedEdgeIndex = null;
+      state.selection.selectedWallIndex = null;
+      state.selection.selectedApertureId = null;
+      state.selection.selectedApertureWallIndex = null;
+    });
+  },
+
+  /**
+   * Clear segment selection
+   */
+  clearSegmentSelection: () => {
+    set((state) => {
+      state.selection.selectedSegment = null;
+    });
+  },
+
+  /**
+   * Set hover segment
+   */
+  setHoverSegment: (selection: { roomId: string; wallIndex: number; segmentIndex: number } | null) => {
+    set((state) => {
+      state.selection.hoverSegment = selection;
     });
   },
 

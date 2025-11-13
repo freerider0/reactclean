@@ -77,6 +77,13 @@ export interface Aperture {
   porcentajeMarco?: number; // Frame percentage (uses porcentajeMarcoVentana or porcentajeMarcoPuerta from defaults)
 }
 
+export interface WallSegment {
+  id: string;  // UUID for stable reference
+  startVertexId: string;  // ID referencing vertex in room.segmentVertices
+  endVertexId: string;  // ID referencing vertex in room.segmentVertices
+  wallType: WallType;  // Classification for this segment (exterior, interior, etc.)
+}
+
 export interface Wall {
   vertexIndex: number;  // Start vertex index (end is vertexIndex + 1)
   startVertexId?: string;  // Stable ID for start vertex (preferred over vertexIndex)
@@ -85,6 +92,7 @@ export interface Wall {
   wallType?: WallType;  // Type of wall (affects thermal properties)
   height?: number;      // Wall height in meters (default 2.7m)
   apertures?: Aperture[]; // Doors and windows
+  segments?: WallSegment[]; // Virtual subdivisions for wall type assignment (non-geometric)
   // Computed properties for rendering
   normal?: Vertex;      // Perpendicular vector pointing outward
   startCorner?: Vertex; // Intersection point at start (for mitered corners)
@@ -100,6 +108,7 @@ export interface Room {
   vertices: Vertex[];  // Inner floor boundary - SOURCE OF TRUTH with UUIDs
   originalVertices?: Vertex[];  // Original vertices before auto-insertion from merging (for reset on re-merge)
   assemblyVertices?: Vertex[];  // Vertices with collinear points inserted for envelope calculation (assembly only, not geometry)
+  segmentVertices: Vertex[];  // Derived geometry: vertices + intersection points for segments - DRIVEN BY vertices
   centerlineVertices: Vertex[];  // Wall centerline (offset by half thickness) - PINK LINE
   innerBoundaryVertices?: Vertex[];  // Inner boundary of exterior walls (centerline + interior wall thickness) - YELLOW LINE
   walls: Wall[];  // Wall metadata for each edge - tied to vertices, never to envelope
@@ -237,6 +246,12 @@ export interface DrawingState {
 // SELECTION STATE
 // ============================================================================
 
+export interface SegmentSelection {
+  roomId: string;
+  wallIndex: number;
+  segmentIndex: number;
+}
+
 export interface SelectionState {
   selectedRoomIds: string[];
   selectedVertexIndex: number | null;
@@ -244,12 +259,14 @@ export interface SelectionState {
   selectedWallIndex: number | null;
   selectedApertureId: string | null;
   selectedApertureWallIndex: number | null;
+  selectedSegment: SegmentSelection | null;  // Selected wall segment
   hoverRoomId: string | null;
   hoverVertexIndex: number | null;
   hoverEdgeIndex: number | null;
   hoverWallIndex: number | null;
   hoverApertureId: string | null;
   hoverApertureWallIndex: number | null;
+  hoverSegment: SegmentSelection | null;  // Hovered wall segment
   // Diagonal constraint mode
   diagonalConstraintMode: boolean;
   diagonalVertices: number[];
