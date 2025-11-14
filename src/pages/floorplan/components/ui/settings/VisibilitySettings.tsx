@@ -87,56 +87,6 @@ export function VisibilitySettings({ config, onUpdateConfig }: VisibilitySetting
           />
         </button>
       </div>
-
-      {/* Debug Lines Visibility */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} strokeDasharray="4 4" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div>
-            <div className="text-sm font-medium text-gray-900">Show Debug Lines</div>
-            <div className="text-xs text-gray-500">Display pink/yellow/green reference lines</div>
-          </div>
-        </div>
-        <button
-          onClick={() => onUpdateConfig({ showDebugLines: !config.showDebugLines })}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-            config.showDebugLines ? 'bg-blue-600' : 'bg-gray-200'
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              config.showDebugLines ? 'translate-x-6' : 'translate-x-1'
-            }`}
-          />
-        </button>
-      </div>
-
-      {/* Envelope Vertices Visibility */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-          <div>
-            <div className="text-sm font-medium text-gray-900">Show Envelope Vertices</div>
-            <div className="text-xs text-gray-500">Display outer boundary control points</div>
-          </div>
-        </div>
-        <button
-          onClick={() => onUpdateConfig({ showEnvelopeVertices: !config.showEnvelopeVertices })}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-            config.showEnvelopeVertices ? 'bg-blue-600' : 'bg-gray-200'
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              config.showEnvelopeVertices ? 'translate-x-6' : 'translate-x-1'
-            }`}
-          />
-        </button>
-      </div>
     </div>
   );
 }

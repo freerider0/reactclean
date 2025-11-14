@@ -10,10 +10,11 @@ import {
   SnappingSettings,
   GridSettings,
   WallSettings,
-  ApertureSettings
+  ApertureSettings,
+  DebugSettings
 } from './settings';
 
-type ConfigCategory = 'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | null;
+type ConfigCategory = 'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | 'debug' | null;
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -42,6 +43,7 @@ export function SettingsModal({
       case 'grid': return 'Grid Settings';
       case 'walls': return 'Wall Defaults';
       case 'apertures': return 'Aperture Settings';
+      case 'debug': return 'Debug Settings';
       default: return 'Floorplan Settings';
     }
   };
@@ -106,6 +108,13 @@ export function SettingsModal({
 
             {category === 'apertures' && (
               <ApertureSettings
+                config={config}
+                onUpdateConfig={onUpdateConfig}
+              />
+            )}
+
+            {category === 'debug' && (
+              <DebugSettings
                 config={config}
                 onUpdateConfig={onUpdateConfig}
               />

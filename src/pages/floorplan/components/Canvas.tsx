@@ -277,7 +277,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       // Pass isDragging flag to hide dark gray fill and show half-thickness walls with snap indicators
       // Pass showDebugLines from config
       // Pass selected segment for highlighting
-      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment);
+      // Pass showHalfWalls from config to control light gray half-thickness walls visibility
+      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment, config.showHalfWalls ?? true);
     });
 
     // Draw aperture ghost preview (when dragging in edit mode)
@@ -651,13 +652,21 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     }
 
     // Draw segments on top of everything (in Assembly mode only, hide during drag)
-    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
+    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && config.showWallTypeSegments) {
       drawSegments(ctx, rooms, viewport, selection.selectedSegment);
     }
 
     // Draw wall segment vertices (orange dots) on top of segments
-    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging) {
+    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && config.showWallTypeSegments) {
       drawWallSegmentVertices(ctx, rooms, viewport);
+    }
+
+    // Draw envelope vertices (debug visualization)
+    if (config.showEnvelopeVertices) {
+      rooms.forEach(room => {
+        drawCenterlineVertexNumbers(ctx, room, viewport); // Blue circles on envelope
+        drawContractedEnvelopeVertexNumbers(ctx, room, viewport); // Green circles on contracted envelope
+      });
     }
 
     // Draw apertures (doors/windows) on top of segments so they're always visible

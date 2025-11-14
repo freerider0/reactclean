@@ -31,7 +31,8 @@ export function drawEnvelope(
   snapSegmentWorld?: { p1: Vertex; p2: Vertex },
   isDragging: boolean = false,
   showDebugLines: boolean = false,
-  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
+  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
+  showHalfWalls: boolean = false
 ): void {
   if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
 
@@ -84,10 +85,10 @@ export function drawEnvelope(
 
   // Draw walls (with segments if they exist)
   // When dragging, always draw walls to show snap indicators
-  // When not dragging and has segments, draw walls to show segment colors ON TOP of the envelope
+  // When not dragging, only draw if showHalfWalls is enabled and has segments
   const hasSegments = room.walls.some(w => w.segments && w.segments.length > 0);
 
-  if (isDragging || hasSegments) {
+  if (isDragging || (showHalfWalls && hasSegments)) {
     drawWalls(ctx, room, viewport, {
       snapSegmentWorld,
       selectedSegment,

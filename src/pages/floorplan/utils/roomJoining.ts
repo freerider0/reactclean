@@ -16,10 +16,11 @@ const ANGLE_TOLERANCE = 10;    // degrees - walls must be within this of opposit
 
 // Types
 interface LineSegment {
+  id: string;         // Unique identifier for this segment
   p1: Vertex;
   p2: Vertex;
   edgeIndex?: number; // Track which actual edge this segment corresponds to
-  room?: Room; // Track which room this segment belongs to
+  room?: Room;        // Track which room this segment belongs to
 }
 
 interface SegmentPair {
@@ -159,8 +160,8 @@ function lineIntersection(
  * Get room segments from centerline
  */
 function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
-  // Use room.vertices (actual walls) so edgeIndex matches walls array and doors can be found
-  const centerline = room.vertices;
+  // Use room.centerlineVertices (outer edge of light gray half walls) for snap targets
+  const centerline = room.centerlineVertices;
 
   // Transform to world coordinates
   const worldVertices = centerline.map(v =>
@@ -178,6 +179,7 @@ function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
   for (let i = 0; i < offsetVertices.length; i++) {
     const next = (i + 1) % offsetVertices.length;
     segments.push({
+      id: crypto.randomUUID(),
       p1: offsetVertices[i],
       p2: offsetVertices[next],
       edgeIndex: i,
@@ -788,7 +790,7 @@ export function snapRoomToRooms(
       }
     }
 
-    // Get actual wall edges (outer boundary) instead of centerlines
+    // Get actual wall edges (outer edge of light gray half walls)
     let actualMovingWall: LineSegment | undefined;
     let actualStationaryWall: LineSegment | undefined;
 
@@ -797,12 +799,15 @@ export function snapRoomToRooms(
       const edgeIdx = closestPair.moving.edgeIndex;
 
       // Safety check: ensure vertices exist at these indices
-      if (room.vertices[edgeIdx] && room.vertices[(edgeIdx + 1) % room.vertices.length]) {
-        const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
-        const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+      if (room.centerlineVertices[edgeIdx] && room.centerlineVertices[(edgeIdx + 1) % room.centerlineVertices.length]) {
+        const v1 = localToWorld(room.centerlineVertices[edgeIdx], room.position, room.rotation, room.scale);
+        const v2 = localToWorld(room.centerlineVertices[(edgeIdx + 1) % room.centerlineVertices.length], room.position, room.rotation, room.scale);
         actualMovingWall = {
+          id: crypto.randomUUID(),
           p1: { x: v1.x + proposedOffset.x, y: v1.y + proposedOffset.y },
-          p2: { x: v2.x + proposedOffset.x, y: v2.y + proposedOffset.y }
+          p2: { x: v2.x + proposedOffset.x, y: v2.y + proposedOffset.y },
+          edgeIndex: edgeIdx,
+          room: room
         };
       }
     }
@@ -812,12 +817,15 @@ export function snapRoomToRooms(
       const edgeIdx = closestPair.stationary.edgeIndex;
 
       // Safety check: ensure vertices exist at these indices
-      if (room.vertices[edgeIdx] && room.vertices[(edgeIdx + 1) % room.vertices.length]) {
-        const v1 = localToWorld(room.vertices[edgeIdx], room.position, room.rotation, room.scale);
-        const v2 = localToWorld(room.vertices[(edgeIdx + 1) % room.vertices.length], room.position, room.rotation, room.scale);
+      if (room.centerlineVertices[edgeIdx] && room.centerlineVertices[(edgeIdx + 1) % room.centerlineVertices.length]) {
+        const v1 = localToWorld(room.centerlineVertices[edgeIdx], room.position, room.rotation, room.scale);
+        const v2 = localToWorld(room.centerlineVertices[(edgeIdx + 1) % room.centerlineVertices.length], room.position, room.rotation, room.scale);
         actualStationaryWall = {
+          id: crypto.randomUUID(),
           p1: v1,
-          p2: v2
+          p2: v2,
+          edgeIndex: edgeIdx,
+          room: room
         };
       }
     }

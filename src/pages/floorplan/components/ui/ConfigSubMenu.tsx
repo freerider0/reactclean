@@ -4,7 +4,7 @@
 
 import React from 'react';
 
-export type ConfigCategory = 'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures';
+export type ConfigCategory = 'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | 'debug';
 
 interface ConfigSubMenuProps {
   isOpen: boolean;
@@ -71,6 +71,15 @@ export function ConfigSubMenu({
       icon: (
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+        </svg>
+      )
+    },
+    {
+      id: 'debug',
+      label: 'Debug',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
         </svg>
       )
     }

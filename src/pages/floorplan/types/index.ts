@@ -212,6 +212,8 @@ export interface FloorplanConfig {
   showEnvelopeVertices?: boolean; // Show/hide envelope vertices
   showDebugLines?: boolean; // Show/hide debug lines (pink centerline, yellow inner boundary, green contracted)
   showDimensions?: boolean; // Show/hide wall dimensions
+  showWallTypeSegments?: boolean; // Show/hide colored wall type segments
+  showHalfWalls?: boolean; // Show/hide light gray half-thickness walls
 
   // Wall thickness settings
   defaultInteriorWallThickness: number; // Default interior wall thickness in cm

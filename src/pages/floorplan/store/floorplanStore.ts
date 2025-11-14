@@ -35,6 +35,8 @@ const DEFAULT_FLOORPLAN_CONFIG: FloorplanConfig = {
   showEnvelopeVertices: true,
   showDebugLines: false, // Hide debug lines (pink, yellow, green) by default
   showDimensions: false, // Hide dimensions by default
+  showWallTypeSegments: true, // Show colored wall type segments by default
+  showHalfWalls: true, // Show light gray half-thickness walls by default
 
   // Wall thickness settings
   defaultInteriorWallThickness: 15, // 15cm
