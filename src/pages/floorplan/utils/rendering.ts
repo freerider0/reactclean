@@ -148,6 +148,50 @@ export function drawEnvelope(
  * Should be called AFTER walls/envelope are drawn to ensure visibility
  */
 /**
+ * Get thickness for aperture based on wall segment type
+ * Default thicknesses: exterior = 30cm, interior = 15cm
+ */
+function getApertureThickness(wall: any, aperture: any, wallLength: number): number {
+  // Calculate door center position along wall (0 to 1)
+  const apertureWidthPx = aperture.width * 100;
+  let startDist: number;
+  if (aperture.anchorVertex === 'end') {
+    startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+  } else {
+    startDist = aperture.distance * 100;
+  }
+  const doorCenterDist = startDist + apertureWidthPx / 2;
+  const doorCenterRatio = doorCenterDist / wallLength;
+
+  // Default to wall thickness if no segments
+  if (!wall.segments || wall.segments.length === 0) {
+    return wall.thickness || 20;
+  }
+
+  // Find which segment the door is on
+  // Segments divide the wall into equal parts
+  const segmentCount = wall.segments.length;
+  const segmentSize = 1.0 / segmentCount;
+
+  for (let i = 0; i < wall.segments.length; i++) {
+    const segmentStart = i * segmentSize;
+    const segmentEnd = (i + 1) * segmentSize;
+
+    if (doorCenterRatio >= segmentStart && doorCenterRatio < segmentEnd) {
+      const segment = wall.segments[i];
+      const isExterior = segment.wallType === 'exterior';
+      // Exterior: 30cm, Interior: 15cm
+      return isExterior ? 30 : 15;
+    }
+  }
+
+  // Fallback to last segment if door is at the very end
+  const lastSegment = wall.segments[wall.segments.length - 1];
+  const isExterior = lastSegment.wallType === 'exterior';
+  return isExterior ? 30 : 15;
+}
+
+/**
  * Helper to calculate aperture center in world coordinates
  */
 function getApertureCenter(
@@ -324,7 +368,9 @@ export function drawApertures(
       };
 
       // Extend aperture outward from room edge
-      const apertureDepth = wall.thickness + 10;
+      // Use segment-based thickness for exterior vs interior walls
+      const segmentThickness = getApertureThickness(wall, aperture, wallLength);
+      const apertureDepth = segmentThickness; // Use wall thickness exactly, no extra depth
       const outerApertureStart = {
         x: roomEdgeStart.x + perpX * apertureDepth,
         y: roomEdgeStart.y + perpY * apertureDepth
@@ -340,11 +386,12 @@ export function drawApertures(
       const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
       const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
 
-      // Draw aperture opening as white rectangle
-      ctx.fillStyle = '#FFFFFF';
+      // Draw aperture opening as rectangle with thin dashed line
+      ctx.fillStyle = room.color || '#FFFFFF'; // Same color as room polygon (floor)
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 0.5; // Very thin line
       ctx.globalAlpha = 1;
+      ctx.setLineDash([3, 3]); // Dashed line pattern
 
       ctx.beginPath();
       ctx.moveTo(screenRoomEdgeStart.x, screenRoomEdgeStart.y);
@@ -354,6 +401,8 @@ export function drawApertures(
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+
+      ctx.setLineDash([]); // Reset to solid lines for door arc
 
       // Draw door swing arc for doors (architectural floor plan style)
       if (aperture.type === 'door') {
@@ -380,14 +429,6 @@ export function drawApertures(
         // End angle is 90 degrees counterclockwise from door panel
         const startAngle = angleToDoorPanel;
         const endAngle = angleToDoorPanel - Math.PI / 2;
-
-        // Draw door panel line (thin black line at closed position)
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(hingePoint.x, hingePoint.y);
-        ctx.lineTo(doorPanelEnd.x, doorPanelEnd.y);
-        ctx.stroke();
 
         // Draw 90-degree swing arc
         ctx.strokeStyle = '#000000';
@@ -493,7 +534,10 @@ export function drawApertureGhost(
   };
 
   // Extend aperture outward from room edge
-  const apertureDepth = wall.thickness + 10;
+  // Use segment-based thickness for exterior vs interior walls
+  const tempAperture = { ...aperture, distance: targetDistance, anchorVertex: targetAnchor };
+  const segmentThickness = getApertureThickness(wall, tempAperture, wallLength);
+  const apertureDepth = segmentThickness; // Use wall thickness exactly, no extra depth
   const outerApertureStart = {
     x: roomEdgeStart.x + perpX * apertureDepth,
     y: roomEdgeStart.y + perpY * apertureDepth
@@ -509,12 +553,20 @@ export function drawApertureGhost(
   const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
   const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
 
-  // Draw ghost aperture with transparency
-  // Use cyan for valid position, red for invalid
-  ctx.fillStyle = isValid ? 'rgba(0, 255, 255, 0.3)' : 'rgba(255, 0, 0, 0.3)';
-  ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.6)' : 'rgba(255, 0, 0, 0.6)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 5]);
+  // Draw ghost aperture with thin dashed line
+  // Use room color like floor, cyan/red stroke for valid/invalid indication
+  const roomColor = room.color || '#FFFFFF';
+  // Convert room color to rgba with transparency
+  const hexToRgba = (hex: string, alpha: number) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
+  ctx.fillStyle = hexToRgba(roomColor, 0.8); // Room color with slight transparency
+  ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 0, 0, 0.8)';
+  ctx.lineWidth = 0.5; // Very thin line
+  ctx.setLineDash([3, 3]); // Dashed line pattern
 
   ctx.beginPath();
   ctx.moveTo(screenRoomEdgeStart.x, screenRoomEdgeStart.y);
@@ -551,15 +603,8 @@ export function drawApertureGhost(
     const startAngle = angleToDoorPanel;
     const endAngle = angleToDoorPanel - Math.PI / 2;
 
-    // Draw door panel line (semi-transparent)
-    ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.6)' : 'rgba(255, 0, 0, 0.6)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(hingePoint.x, hingePoint.y);
-    ctx.lineTo(doorPanelEnd.x, doorPanelEnd.y);
-    ctx.stroke();
-
     // Draw 90-degree swing arc
+    ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 0, 0, 0.8)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(
