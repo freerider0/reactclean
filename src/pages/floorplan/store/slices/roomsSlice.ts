@@ -56,12 +56,12 @@ export const createRoomsSlice: StateCreator<
       // Recalculate centerlineVertices if vertices or wallThickness changed
       if (updates.vertices || updates.wallThickness || updates.walls) {
         const oldCenterline = updatedRoom.centerlineVertices;
-        updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
+        updatedRoom.centerlineVertices = calculateCenterline(updatedRoom).vertices;
 
-        console.log(`🔧 updateRoom: Recalculated centerline for room ${id}`);
-        console.log(`  Old centerline: ${oldCenterline.length} vertices`);
-        console.log(`  New centerline: ${updatedRoom.centerlineVertices.length} vertices`);
-        console.log(`  New vertices: ${updatedRoom.vertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3)}`);
+        // console.log(`🔧 updateRoom: Recalculated centerline for room ${id}`);
+        // console.log(`  Old centerline: ${oldCenterline.length} vertices`);
+        // console.log(`  New centerline: ${updatedRoom.centerlineVertices.length} vertices`);
+        // console.log(`  New vertices: ${updatedRoom.vertices.map(v => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`).slice(0, 3)}`);
       }
 
       state.rooms.set(id, updatedRoom);
@@ -140,7 +140,7 @@ export const createRoomsSlice: StateCreator<
    * TODO: Implement room merging logic
    */
   mergeRooms: async (roomIds) => {
-    console.log('🔀 Merging rooms:', roomIds);
+    // console.log('🔀 Merging rooms:', roomIds);
 
     // Get rooms to merge
     const roomsToMerge = roomIds
@@ -208,7 +208,7 @@ export const createRoomsSlice: StateCreator<
         ...updates
       };
 
-      console.log(`✅ Updated aperture ${apertureId} on wall ${wallIndex} of room ${roomId}`);
+      // console.log(`✅ Updated aperture ${apertureId} on wall ${wallIndex} of room ${roomId}`);
     });
 
     // Push to history
@@ -264,7 +264,7 @@ export const createRoomsSlice: StateCreator<
 
       targetWall.apertures.push(aperture);
 
-      console.log(`✅ Moved aperture ${apertureId} from wall ${sourceWallIndex} to wall ${targetWallIndex} at distance ${newDistance}m (anchor: ${newAnchor})`);
+      // console.log(`✅ Moved aperture ${apertureId} from wall ${sourceWallIndex} to wall ${targetWallIndex} at distance ${newDistance}m (anchor: ${newAnchor})`);
     });
 
     // Push to history
@@ -321,7 +321,7 @@ export const createRoomsSlice: StateCreator<
 
       targetWall.apertures.push(aperture);
 
-      console.log(`✅ Moved aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${targetWallIndex}`);
+      // console.log(`✅ Moved aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${targetWallIndex}`);
     });
 
     // Push to history
@@ -353,7 +353,7 @@ export const createRoomsSlice: StateCreator<
       // Remove the aperture
       wall.apertures = wall.apertures.filter(a => a.id !== apertureId);
 
-      console.log(`🗑️ Deleted aperture ${apertureId} from wall ${wallIndex} of room ${roomId}`);
+      // console.log(`🗑️ Deleted aperture ${apertureId} from wall ${wallIndex} of room ${roomId}`);
     });
 
     // Clear aperture selection if this aperture was selected
@@ -389,12 +389,12 @@ export const createRoomsSlice: StateCreator<
     // Auto-solve if requested
     if (autoSolve) {
       try {
-        console.log('🔧 Auto-solving constraints after adding...');
+        // console.log('🔧 Auto-solving constraints after adding...');
         const solvedRoom = await solveRoom(updatedRoom);
 
-        console.log('✅ Constraint solved, updating room vertices...');
-        console.log('  Old vertices:', room.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
-        console.log('  New vertices:', solvedRoom.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+        // console.log('✅ Constraint solved, updating room vertices...');
+        // console.log('  Old vertices:', room.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
+        // console.log('  New vertices:', solvedRoom.vertices.map(v => `(${v.x.toFixed(1)}, ${v.y.toFixed(1)})`).join(', '));
 
         // Update room with solved geometry
         set((state) => {
@@ -407,13 +407,13 @@ export const createRoomsSlice: StateCreator<
           // walls stay unchanged - vertex IDs remain stable during constraint solving
           currentRoom.constraints = solvedRoom.constraints;
           currentRoom.primitives = solvedRoom.primitives;
-          currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
+          currentRoom.centerlineVertices = calculateCenterline(solvedRoom).vertices;
         });
 
         // Recalculate envelopes after constraint solving
-        console.log('🔄 Recalculating envelopes after constraint solving...');
+        // console.log('🔄 Recalculating envelopes after constraint solving...');
         await get().recalculateAllEnvelopes();
-        console.log('✨ Envelope recalculation complete');
+        // console.log('✨ Envelope recalculation complete');
       } catch (error) {
         console.error('Error auto-solving after adding constraint:', error);
         // Fallback: just add the constraint without solving
@@ -473,7 +473,7 @@ export const createRoomsSlice: StateCreator<
     };
 
     try {
-      console.log('🔧 Auto-solving constraints after toggling...');
+      // console.log('🔧 Auto-solving constraints after toggling...');
       const solvedRoom = await solveRoom(updatedRoom);
 
       // Update room with solved geometry
@@ -486,11 +486,11 @@ export const createRoomsSlice: StateCreator<
         // walls stay unchanged - vertex IDs remain stable during constraint solving
         currentRoom.constraints = solvedRoom.constraints;
         currentRoom.primitives = solvedRoom.primitives;
-        currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
+        currentRoom.centerlineVertices = calculateCenterline(solvedRoom).vertices;
       });
 
       // Recalculate envelopes after constraint solving
-      console.log('🔄 Recalculating envelopes after toggling constraint...');
+      // console.log('🔄 Recalculating envelopes after toggling constraint...');
       await get().recalculateAllEnvelopes();
     } catch (error) {
       console.error('Error auto-solving after toggling constraint:', error);
@@ -515,7 +515,7 @@ export const createRoomsSlice: StateCreator<
     }
 
     try {
-      console.log('🔧 Solving constraints manually...');
+      // console.log('🔧 Solving constraints manually...');
       const solvedRoom = await solveRoom(room);
 
       // Update room with solved geometry
@@ -529,11 +529,11 @@ export const createRoomsSlice: StateCreator<
         // walls stay unchanged - vertex IDs remain stable during constraint solving
         currentRoom.constraints = solvedRoom.constraints;
         currentRoom.primitives = solvedRoom.primitives;
-        currentRoom.centerlineVertices = calculateCenterline(solvedRoom);
+        currentRoom.centerlineVertices = calculateCenterline(solvedRoom).vertices;
       });
 
       // Recalculate envelopes after constraint solving
-      console.log('🔄 Recalculating envelopes after manual constraint solving...');
+      // console.log('🔄 Recalculating envelopes after manual constraint solving...');
       await get().recalculateAllEnvelopes();
     } catch (error) {
       console.error('Error solving constraints:', error);
@@ -597,12 +597,12 @@ export const createRoomsSlice: StateCreator<
     const currentConfig = get().config;
     const currentRooms = get().getAllRooms(); // Get fresh data right before async call
 
-    console.log('🔄 Recalculating envelopes for', currentRooms.length, 'rooms');
-    console.log('🔧 Using wall thicknesses:', {
-      interior: currentConfig.defaultInteriorWallThickness,
-      exterior: currentConfig.defaultExteriorWallThickness,
-      miterLimit: currentConfig.miterLimit ?? 2.0
-    });
+    // console.log('🔄 Recalculating envelopes for', currentRooms.length, 'rooms');
+    // console.log('🔧 Using wall thicknesses:', {
+    //   interior: currentConfig.defaultInteriorWallThickness,
+    //   exterior: currentConfig.defaultExteriorWallThickness,
+    //   miterLimit: currentConfig.miterLimit ?? 2.0
+    // });
 
     // Calculate envelopes using the latest room state (async with Clipper WebAssembly)
     const envelopeMap = await calculateFloorplanEnvelopes(
@@ -619,10 +619,10 @@ export const createRoomsSlice: StateCreator<
         const result = envelopeMap.get(roomId);
         if (!result) return;
 
-        console.log(`✨ Room ${roomId}: envelope updated`);
-        console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
-        console.log(`  → room.vertices: ${freshRoom.vertices.length}, centerlineVertices: ${freshRoom.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
-        console.log(`  → Keeping existing ${freshRoom.walls.length} walls (tied to room.vertices, not envelope)`);
+        // console.log(`✨ Room ${roomId}: envelope updated`);
+        // console.log(`  → envelopeVertices: ${result.envelope.length}, debugContracted: ${result.debugContracted.length}`);
+        // console.log(`  → room.vertices: ${freshRoom.vertices.length}, centerlineVertices: ${freshRoom.centerlineVertices?.length || 0}, envelope: ${result.envelope.length}`);
+        // console.log(`  → Keeping existing ${freshRoom.walls.length} walls (tied to room.vertices, not envelope)`);
 
         // Build updated room object - MUST replace entire object to trigger Zustand reactivity
         const updatedRoom = {
@@ -635,13 +635,13 @@ export const createRoomsSlice: StateCreator<
 
         // Store assembly vertices if provided (collinear points for envelope calculation only)
         if (result.updatedVertices) {
-          console.log(`  ⭐ Assembly vertices: ${freshRoom.vertices.length} → ${result.updatedVertices.length} (collinear points inserted for envelope)`);
+          // console.log(`  ⭐ Assembly vertices: ${freshRoom.vertices.length} → ${result.updatedVertices.length} (collinear points inserted for envelope)`);
           updatedRoom.assemblyVertices = result.updatedVertices;
 
           // Recalculate centerline using the new assembly vertices (with reference points)
           // This ensures the pink centerline and subsequent envelope calculations use the collinear points
-          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
-          console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using assembly vertices with reference points)`);
+          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom).vertices;
+          // console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using assembly vertices with reference points)`);
 
           // NEVER modify updatedRoom.vertices or updatedRoom.walls during envelope update!
         } else if (freshRoom.assemblyVertices) {
@@ -649,8 +649,8 @@ export const createRoomsSlice: StateCreator<
           updatedRoom.assemblyVertices = undefined;
 
           // Recalculate centerline using geometry vertices only
-          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom);
-          console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
+          updatedRoom.centerlineVertices = calculateCenterline(updatedRoom).vertices;
+          // console.log(`  ↻ Recalculated centerline: ${updatedRoom.centerlineVertices.length} vertices (using geometry vertices only)`);
         }
 
         // Replace entire room object to trigger Map change detection
@@ -676,11 +676,11 @@ export const createRoomsSlice: StateCreator<
 
       // Store for visualization
       state.contractedEnvelopes = Array.from(envelopesByRoom.values());
-      console.log(`📐 Extracted ${envelopesByRoom.size} contracted envelope(s)`);
+      // console.log(`📐 Extracted ${envelopesByRoom.size} contracted envelope(s)`);
 
       // Calculate wall segments based on contracted envelope intersections
       if (envelopesByRoom.size > 0) {
-        console.log('🔷 Calculating wall segments...');
+        // console.log('🔷 Calculating wall segments...');
 
         // For each room, only check intersections with OTHER rooms' envelopes
         // Use fresh room data from state, not the snapshot
@@ -707,15 +707,15 @@ export const createRoomsSlice: StateCreator<
               segmentVertices: updatedRoom.segmentVertices
             });
             const totalSegments = updatedRoom.walls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
-            console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
+            // console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
           }
         });
-        console.log('✨ Wall segments calculated');
+        // console.log('✨ Wall segments calculated');
       }
 
       state.isCalculatingEnvelopes = false;
     });
 
-    console.log('✅ Envelope calculation complete');
+    // console.log('✅ Envelope calculation complete');
   }
 });

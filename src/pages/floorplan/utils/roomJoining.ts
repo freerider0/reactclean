@@ -12,6 +12,7 @@ import { localToWorld } from './coordinates';
 // Thresholds
 const SEGMENT_THRESHOLD = 50;  // pixels - max distance for edge snapping
 const VERTEX_THRESHOLD = 30;   // pixels - max distance for vertex snapping
+const DOOR_SNAP_THRESHOLD = 50; // pixels - max distance for door-to-door snapping (matches SEGMENT_THRESHOLD)
 const ANGLE_TOLERANCE = 10;    // degrees - walls must be within this of opposite
 
 // Types
@@ -21,6 +22,18 @@ interface LineSegment {
   p2: Vertex;
   edgeIndex?: number; // Track which actual edge this segment corresponds to
   room?: Room;        // Track which room this segment belongs to
+  startVertexId?: string; // Stable ID of the edge's start vertex
+  endVertexId?: string;   // Stable ID of the edge's end vertex
+}
+
+interface EdgeMetadata {
+  startVertexId: string;
+  endVertexId: string;
+}
+
+interface CenterlineResult {
+  vertices: Vertex[];
+  edgeMetadata: EdgeMetadata[];
 }
 
 interface SegmentPair {
@@ -40,6 +53,7 @@ export interface RoomSnapResult {
   translation: Vertex;   // Delta to add to moving room position
   snapped: boolean;      // true if snap found
   mode?: 'edge-vertex' | 'vertex-only' | 'edge-only';
+  isDoorSnap?: boolean;  // true if door-to-door snapping is active
   movingRoomId?: string;       // ID of the moving room
   stationaryRoomId?: string;   // ID of the stationary room
   movingSegmentWorld?: { p1: Vertex; p2: Vertex };  // Centerline segment in world space
@@ -57,24 +71,36 @@ export interface RoomSnapResult {
  * Returns vertices offset OUTWARD by half the wall thickness
  * (floor polygon is inner boundary, centerline is outside it)
  *
- * Uses assemblyVertices (with collinear reference points) if available,
- * otherwise falls back to geometry vertices
+ * IMPORTANT: Always uses room.vertices (not assemblyVertices) to ensure
+ * centerline segments map 1:1 with walls for door detection.
+ *
+ * Returns both the centerline vertices and edge metadata that maps each
+ * centerline segment to its corresponding edge in room.vertices.
  */
-export function calculateCenterline(room: Room): Vertex[] {
+export function calculateCenterline(room: Room): CenterlineResult {
   const halfThickness = room.wallThickness / 2;
 
-  // Use assemblyVertices (with reference points) if available, otherwise use geometry vertices
-  const vertices = room.assemblyVertices || room.vertices;
+  // IMPORTANT: Always use room.vertices (not assemblyVertices) for edge metadata
+  // so that centerline segments map 1:1 with walls
+  // assemblyVertices contains extra collinear reference points that don't correspond to walls
+  const vertices = room.vertices;
   const n = vertices.length;
 
-  if (n < 3) return vertices;
+  if (n < 3) return { vertices, edgeMetadata: [] };
 
-  // Create offset lines for each edge
+  // Create offset lines and track edge metadata for each edge
   const offsetLines: { start: Vertex; end: Vertex }[] = [];
+  const edgeMetadata: EdgeMetadata[] = [];
 
   for (let i = 0; i < n; i++) {
     const p1 = vertices[i];
     const p2 = vertices[(i + 1) % n];
+
+    // Track edge metadata using stable vertex IDs
+    edgeMetadata.push({
+      startVertexId: p1.id || `v_${i}`,
+      endVertexId: p2.id || `v_${(i + 1) % n}`
+    });
 
     // Edge vector
     const dx = p2.x - p1.x;
@@ -123,7 +149,7 @@ export function calculateCenterline(room: Room): Vertex[] {
     }
   }
 
-  return centerline;
+  return { vertices: centerline, edgeMetadata };
 }
 
 /**
@@ -157,11 +183,13 @@ function lineIntersection(
 }
 
 /**
- * Get room segments from centerline
+ * Get room segments from centerline with edge metadata
  */
 function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
-  // Use room.centerlineVertices (outer edge of light gray half walls) for snap targets
-  const centerline = room.centerlineVertices;
+  // Recalculate centerline to get edge metadata
+  const centerlineResult = calculateCenterline(room);
+  const centerline = centerlineResult.vertices;
+  const edgeMetadata = centerlineResult.edgeMetadata;
 
   // Transform to world coordinates
   const worldVertices = centerline.map(v =>
@@ -174,16 +202,20 @@ function getRoomSegments(room: Room, offset: Vertex): LineSegment[] {
     y: v.y + offset.y
   }));
 
-  // Create segments
+  // Create segments with stable edge metadata
   const segments: LineSegment[] = [];
   for (let i = 0; i < offsetVertices.length; i++) {
     const next = (i + 1) % offsetVertices.length;
+    const metadata = edgeMetadata[i];
+
     segments.push({
       id: crypto.randomUUID(),
       p1: offsetVertices[i],
       p2: offsetVertices[next],
       edgeIndex: i,
-      room: room
+      room: room,
+      startVertexId: metadata?.startVertexId,
+      endVertexId: metadata?.endVertexId
     });
   }
 
@@ -688,52 +720,209 @@ export function snapRoomToRooms(
     return { rotation: 0, translation: proposedOffset, snapped: false };
   }
 
-  // Get all possible snap points: wall vertices + door centers
-  const movingPoints: Vertex[] = [closestPair.moving.p1, closestPair.moving.p2];
-  const stationaryPoints: Vertex[] = [closestPair.stationary.p1, closestPair.stationary.p2];
+  // Get snap points: wall vertices and door centers separately
+  const movingVertices: Vertex[] = [closestPair.moving.p1, closestPair.moving.p2];
+  const stationaryVertices: Vertex[] = [closestPair.stationary.p1, closestPair.stationary.p2];
+  const movingDoors: Vertex[] = [];
+  const stationaryDoors: Vertex[] = [];
 
-  // Add door centers ONLY from the closest wall pair
-  if (closestPair.moving.room && closestPair.moving.edgeIndex !== undefined) {
-    const doors = getDoorsOnWall(closestPair.moving.room, closestPair.moving.edgeIndex);
-    for (const door of doors) {
-      const doorCenter = getDoorCenterWorld(closestPair.moving.room, closestPair.moving.edgeIndex, door, proposedOffset);
-      if (doorCenter) movingPoints.push(doorCenter);
-    }
-  }
+  // Add door centers from the closest wall using midpoint comparison
+  // (Same algorithm as orange wall highlighting in rendering.ts)
+  if (closestPair.moving.room) {
+    const room = closestPair.moving.room;
 
-  if (closestPair.stationary.room && closestPair.stationary.edgeIndex !== undefined) {
-    const doors = getDoorsOnWall(closestPair.stationary.room, closestPair.stationary.edgeIndex);
-    for (const door of doors) {
-      const doorCenter = getDoorCenterWorld(closestPair.stationary.room, closestPair.stationary.edgeIndex, door);
-      if (doorCenter) stationaryPoints.push(doorCenter);
-    }
-  }
+    // Calculate segment midpoint (the orange wall)
+    const segmentMid = {
+      x: (closestPair.moving.p1.x + closestPair.moving.p2.x) / 2,
+      y: (closestPair.moving.p1.y + closestPair.moving.p2.y) / 2
+    };
 
-  // Find closest point pair among ALL points (vertices + doors)
-  let doorCenters: { moving: Vertex; stationary: Vertex } | undefined;
-  let minPointDistance = Infinity;
-  let closestMovingPoint: Vertex | undefined;
-  let closestStationaryPoint: Vertex | undefined;
+    // Find wall with closest midpoint to segment midpoint
+    let closestWall: any = null;
+    let closestWallIndex = -1;
+    let minDist = Infinity;
 
-  for (const mPoint of movingPoints) {
-    for (const sPoint of stationaryPoints) {
-      const dist = pointDistance(mPoint, sPoint);
-      if (dist < minPointDistance) {
-        minPointDistance = dist;
-        closestMovingPoint = mPoint;
-        closestStationaryPoint = sPoint;
+    room.walls?.forEach((wall, wallIndex) => {
+      // Get wall vertices (from room.vertices, which walls reference)
+      const v1 = room.vertices[wall.vertexIndex];
+      const v2 = room.vertices[(wall.vertexIndex + 1) % room.vertices.length];
+
+      if (!v1 || !v2) return;
+
+      // Transform to world coordinates (walls are in local space)
+      const cos = Math.cos(room.rotation);
+      const sin = Math.sin(room.rotation);
+      const v1World = {
+        x: room.position.x + (v1.x * cos - v1.y * sin) * room.scale + proposedOffset.x,
+        y: room.position.y + (v1.x * sin + v1.y * cos) * room.scale + proposedOffset.y
+      };
+      const v2World = {
+        x: room.position.x + (v2.x * cos - v2.y * sin) * room.scale + proposedOffset.x,
+        y: room.position.y + (v2.x * sin + v2.y * cos) * room.scale + proposedOffset.y
+      };
+
+      // Calculate wall midpoint in world space
+      const wallMid = {
+        x: (v1World.x + v2World.x) / 2,
+        y: (v1World.y + v2World.y) / 2
+      };
+
+      // Distance between midpoints
+      const dist = Math.sqrt((wallMid.x - segmentMid.x) ** 2 + (wallMid.y - segmentMid.y) ** 2);
+
+      if (dist < minDist) {
+        minDist = dist;
+        closestWall = wall;
+        closestWallIndex = wallIndex;
+      }
+    });
+
+    console.log('🔍 Moving room - found closest wall by midpoint:', {
+      wallIndex: closestWallIndex,
+      distance: minDist.toFixed(2),
+      hasDoors: closestWall?.apertures?.filter((ap: any) => ap.type === 'door').length || 0
+    });
+
+    if (closestWall?.apertures) {
+      const doors = closestWall.apertures.filter((ap: any) => ap.type === 'door');
+      console.log(`  ✅ Found ${doors.length} door(s) on closest wall`);
+
+      for (const door of doors) {
+        const doorCenter = getDoorCenterWorld(room, closestWall.vertexIndex, door, proposedOffset);
+        if (doorCenter) {
+          movingDoors.push(doorCenter);
+          console.log(`    Added door center: (${doorCenter.x.toFixed(1)}, ${doorCenter.y.toFixed(1)})`);
+        }
       }
     }
   }
 
-  // Use door centers if the closest pair is within threshold and not wall vertices
-  if (closestMovingPoint && closestStationaryPoint && minPointDistance < VERTEX_THRESHOLD) {
-    const isMovingDoor = closestMovingPoint !== closestPair.moving.p1 && closestMovingPoint !== closestPair.moving.p2;
-    const isStationaryDoor = closestStationaryPoint !== closestPair.stationary.p1 && closestStationaryPoint !== closestPair.stationary.p2;
+  if (closestPair.stationary.room) {
+    const room = closestPair.stationary.room;
 
-    if (isMovingDoor || isStationaryDoor) {
-      doorCenters = { moving: closestMovingPoint, stationary: closestStationaryPoint };
-      console.log('🚪 DOOR SNAP:', minPointDistance.toFixed(1), 'px');
+    // Calculate segment midpoint (the orange wall)
+    const segmentMid = {
+      x: (closestPair.stationary.p1.x + closestPair.stationary.p2.x) / 2,
+      y: (closestPair.stationary.p1.y + closestPair.stationary.p2.y) / 2
+    };
+
+    // Find wall with closest midpoint to segment midpoint
+    let closestWall: any = null;
+    let closestWallIndex = -1;
+    let minDist = Infinity;
+
+    room.walls?.forEach((wall, wallIndex) => {
+      // Get wall vertices (from room.vertices, which walls reference)
+      const v1 = room.vertices[wall.vertexIndex];
+      const v2 = room.vertices[(wall.vertexIndex + 1) % room.vertices.length];
+
+      if (!v1 || !v2) return;
+
+      // Transform to world coordinates (no offset for stationary room)
+      const cos = Math.cos(room.rotation);
+      const sin = Math.sin(room.rotation);
+      const v1World = {
+        x: room.position.x + (v1.x * cos - v1.y * sin) * room.scale,
+        y: room.position.y + (v1.x * sin + v1.y * cos) * room.scale
+      };
+      const v2World = {
+        x: room.position.x + (v2.x * cos - v2.y * sin) * room.scale,
+        y: room.position.y + (v2.x * sin + v2.y * cos) * room.scale
+      };
+
+      // Calculate wall midpoint in world space
+      const wallMid = {
+        x: (v1World.x + v2World.x) / 2,
+        y: (v1World.y + v2World.y) / 2
+      };
+
+      // Distance between midpoints
+      const dist = Math.sqrt((wallMid.x - segmentMid.x) ** 2 + (wallMid.y - segmentMid.y) ** 2);
+
+      if (dist < minDist) {
+        minDist = dist;
+        closestWall = wall;
+        closestWallIndex = wallIndex;
+      }
+    });
+
+    console.log('🔍 Stationary room - found closest wall by midpoint:', {
+      wallIndex: closestWallIndex,
+      distance: minDist.toFixed(2),
+      hasDoors: closestWall?.apertures?.filter((ap: any) => ap.type === 'door').length || 0
+    });
+
+    if (closestWall?.apertures) {
+      const doors = closestWall.apertures.filter((ap: any) => ap.type === 'door');
+      console.log(`  ✅ Found ${doors.length} door(s) on closest wall`);
+
+      for (const door of doors) {
+        const doorCenter = getDoorCenterWorld(room, closestWall.vertexIndex, door);
+        if (doorCenter) {
+          stationaryDoors.push(doorCenter);
+          console.log(`    Added door center: (${doorCenter.x.toFixed(1)}, ${doorCenter.y.toFixed(1)})`);
+        }
+      }
+    }
+  }
+
+  console.log('📊 Door detection result:', { movingDoors: movingDoors.length, stationaryDoors: stationaryDoors.length });
+
+  // Priority system: if both walls have doors, check door-to-door first
+  let doorCenters: { moving: Vertex; stationary: Vertex } | undefined;
+
+  if (movingDoors.length > 0 && stationaryDoors.length > 0) {
+    let minDoorDistance = Infinity;
+    let closestMovingDoor: Vertex | undefined;
+    let closestStationaryDoor: Vertex | undefined;
+
+    for (const mDoor of movingDoors) {
+      for (const sDoor of stationaryDoors) {
+        const dist = pointDistance(mDoor, sDoor);
+        if (dist < minDoorDistance) {
+          minDoorDistance = dist;
+          closestMovingDoor = mDoor;
+          closestStationaryDoor = sDoor;
+        }
+      }
+    }
+
+    // If doors are within threshold, prioritize door snapping over vertices
+    if (closestMovingDoor && closestStationaryDoor && minDoorDistance < DOOR_SNAP_THRESHOLD) {
+      doorCenters = { moving: closestMovingDoor, stationary: closestStationaryDoor };
+      console.log('🚪 DOOR SNAP (priority):', minDoorDistance.toFixed(1), 'px');
+    }
+  }
+
+  // If no door-to-door snap found, check all points (vertices + doors)
+  if (!doorCenters) {
+    const movingPoints = [...movingVertices, ...movingDoors];
+    const stationaryPoints = [...stationaryVertices, ...stationaryDoors];
+
+    let minPointDistance = Infinity;
+    let closestMovingPoint: Vertex | undefined;
+    let closestStationaryPoint: Vertex | undefined;
+
+    for (const mPoint of movingPoints) {
+      for (const sPoint of stationaryPoints) {
+        const dist = pointDistance(mPoint, sPoint);
+        if (dist < minPointDistance) {
+          minPointDistance = dist;
+          closestMovingPoint = mPoint;
+          closestStationaryPoint = sPoint;
+        }
+      }
+    }
+
+    // Use door centers if the closest pair is within threshold and involves at least one door
+    if (closestMovingPoint && closestStationaryPoint && minPointDistance < DOOR_SNAP_THRESHOLD) {
+      const isMovingDoor = movingDoors.some(d => d === closestMovingPoint);
+      const isStationaryDoor = stationaryDoors.some(d => d === closestStationaryPoint);
+
+      if (isMovingDoor || isStationaryDoor) {
+        doorCenters = { moving: closestMovingPoint, stationary: closestStationaryPoint };
+        console.log('🚪 DOOR SNAP:', minPointDistance.toFixed(1), 'px');
+      }
     }
   }
 
@@ -835,6 +1024,7 @@ export function snapRoomToRooms(
       translation: proposedOffset,
       snapped: true,
       mode: snapMode,
+      isDoorSnap: !!doorCenters,
       movingRoomId: closestPair.moving.room?.id,
       stationaryRoomId: closestPair.stationary.room?.id,
       movingSegmentWorld: { p1: closestPair.moving.p1, p2: closestPair.moving.p2 },
@@ -861,6 +1051,7 @@ export function snapRoomToRooms(
     ...transformation,
     snapped: true,
     mode: snapMode,
+    isDoorSnap: !!doorCenters,
     movingRoomId: closestPair.moving.room?.id,
     stationaryRoomId: closestPair.stationary.room?.id,
     movingSegmentWorld: { p1: closestPair.moving.p1, p2: closestPair.moving.p2 },

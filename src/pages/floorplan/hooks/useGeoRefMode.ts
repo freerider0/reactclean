@@ -59,7 +59,7 @@ export function useGeoRefMode({
     (updates: Partial<GeoReference>) => {
       const currentGeoRef = geoRefRef.current;
       const newGeoRef = { ...currentGeoRef, ...updates };
-      console.log('📍 updateGeoRef:', { oldGeoRef: currentGeoRef, updates, newGeoRef });
+      // console.log('📍 updateGeoRef:', { oldGeoRef: currentGeoRef, updates, newGeoRef });
       onGeoRefChange(newGeoRef);
     },
     [onGeoRefChange]
@@ -72,11 +72,11 @@ export function useGeoRefMode({
   const startDrag = useCallback((utmStart: [number, number]) => {
     // Read fresh geoRef from ref
     const currentGeoRef = geoRefRef.current;
-    console.log('🎬 startDrag called:', {
-      utmStart,
-      currentAnchor: currentGeoRef.anchor,
-      geoRefFull: currentGeoRef
-    });
+    // console.log('🎬 startDrag called:', {
+    //   utmStart,
+    //   currentAnchor: currentGeoRef.anchor,
+    //   geoRefFull: currentGeoRef
+    // });
 
     dragStateRef.current = {
       isDragging: false,
@@ -85,7 +85,7 @@ export function useGeoRefMode({
       originalAnchor: { ...currentGeoRef.anchor },
     };
 
-    console.log('   Stored drag state:', dragStateRef.current);
+    // console.log('   Stored drag state:', dragStateRef.current);
   }, []);
 
   /**
@@ -97,7 +97,7 @@ export function useGeoRefMode({
       const dragState = dragStateRef.current;
 
       if (!dragState.dragStart || !dragState.originalAnchor) {
-        console.log('⚠️ updateDrag: No drag start or original anchor', { dragState });
+        // console.log('⚠️ updateDrag: No drag start or original anchor', { dragState });
         return;
       }
 
@@ -111,7 +111,7 @@ export function useGeoRefMode({
         if (dist < 0.1) { // 10cm threshold in meters
           return;
         }
-        console.log('✅ Drag threshold passed, starting drag');
+        // console.log('✅ Drag threshold passed, starting drag');
         dragStateRef.current = { ...dragState, isDragging: true };
       }
 
@@ -120,14 +120,6 @@ export function useGeoRefMode({
         x: dragState.originalAnchor.x + deltaX,
         y: dragState.originalAnchor.y + deltaY,
       };
-
-      console.log('🔄 updateDrag: Updating anchor', {
-        utmCurrent,
-        dragStart: dragState.dragStart,
-        originalAnchor: dragState.originalAnchor,
-        delta: { x: deltaX.toFixed(2) + 'm', y: deltaY.toFixed(2) + 'm' },
-        newAnchor: { x: newAnchor.x.toFixed(2), y: newAnchor.y.toFixed(2) }
-      });
 
       // TODO: Apply snap to cadastral geometries if enabled
       // if (snapEnabled) {
@@ -146,7 +138,7 @@ export function useGeoRefMode({
    * End drag operation
    */
   const endDrag = useCallback(() => {
-    console.log('🏁 endDrag called, final anchor:', geoRefRef.current.anchor);
+    // console.log('🏁 endDrag called, final anchor:', geoRefRef.current.anchor);
     dragStateRef.current = {
       isDragging: false,
       isRotating: false,

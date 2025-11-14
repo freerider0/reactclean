@@ -26,22 +26,22 @@ export const DimensionInput: React.FC<DimensionInputProps> = ({
 
   // Auto-focus and select all when mounted
   useEffect(() => {
-    console.log('DimensionInput mounted at position:', position);
+    // console.log('DimensionInput mounted at position:', position);
 
     // Mark as mounted after a small delay to prevent immediate blur
     const timer = setTimeout(() => {
-      console.log('DimensionInput ready for blur detection');
+      // console.log('DimensionInput ready for blur detection');
       mountedRef.current = true;
     }, 100);
 
     if (inputRef.current) {
-      console.log('Focusing input');
+      // console.log('Focusing input');
       inputRef.current.focus();
       inputRef.current.select();
     }
 
     return () => {
-      console.log('DimensionInput unmounting');
+      // console.log('DimensionInput unmounting');
       clearTimeout(timer);
     };
   }, [position]);
@@ -57,27 +57,27 @@ export const DimensionInput: React.FC<DimensionInputProps> = ({
   };
 
   const handleSubmit = () => {
-    console.log('handleSubmit called, inputValue:', inputValue);
+    // console.log('handleSubmit called, inputValue:', inputValue);
     const parsed = parseFloat(inputValue);
     if (!isNaN(parsed) && parsed > 0) {
       // Convert meters back to cm
       const newValueCm = parsed * 100;
-      console.log('Submitting new value:', newValueCm, 'cm');
+      // console.log('Submitting new value:', newValueCm, 'cm');
       onSubmit(newValueCm);
     } else {
-      console.log('Invalid input, canceling');
+      // console.log('Invalid input, canceling');
       onCancel();
     }
   };
 
   const handleBlur = () => {
-    console.log('handleBlur called, mountedRef.current:', mountedRef.current);
+    // console.log('handleBlur called, mountedRef.current:', mountedRef.current);
     // Only submit on blur if component has been mounted for a bit
     // This prevents immediate blur on mount from closing the input
     if (mountedRef.current) {
       handleSubmit();
     } else {
-      console.log('Ignoring blur - component just mounted');
+      // console.log('Ignoring blur - component just mounted');
     }
   };
 

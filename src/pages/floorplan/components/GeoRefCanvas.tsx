@@ -238,7 +238,7 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
         isDraggingRef.current = true;
         isRotatingRef.current = true; // Mark that we're rotating from handle
         if (dragPanInteraction) dragPanInteraction.setActive(false);
-        console.log('🔴 Clicked on rotation handle, starting rotation');
+        // console.log('🔴 Clicked on rotation handle, starting rotation');
 
         // Get UTM coordinates and start rotation
         const coordinate = evt.coordinate as Coordinate;
@@ -261,7 +261,7 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
         isDraggingRef.current = true;
         // Disable map panning when dragging floorplan
         if (dragPanInteraction) dragPanInteraction.setActive(false);
-        console.log('🎯 Clicked on floorplan, auto-enabling translate mode');
+        // console.log('🎯 Clicked on floorplan, auto-enabling translate mode');
       } else {
         // Clicked on empty map in 'none' mode - allow map panning
         if (dragPanInteraction) dragPanInteraction.setActive(true);
@@ -430,7 +430,7 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
           maxZoom: 20,
         });
         hasInitialFloorplanFitRef.current = true;
-        console.log('📍 Fitted view to floorplan extent (initial load only)');
+        // console.log('📍 Fitted view to floorplan extent (initial load only)');
       }
     } catch (error) {
       console.error('Error converting floorplan to features:', error);
@@ -517,7 +517,7 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
 
       rotationHandleSourceRef.current.addFeature(lineFeature);
 
-      console.log('🔴 Rotation handle positioned at:', { centroidX, centroidY, handleX, handleY, rotation: geoRef.rotation, isDragging: isRotatingRef.current });
+      // console.log('🔴 Rotation handle positioned at:', { centroidX, centroidY, handleX, handleY, rotation: geoRef.rotation, isDragging: isRotatingRef.current });
     } catch (error) {
       console.error('Error creating rotation handle:', error);
     }
@@ -535,8 +535,8 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
       const utmEPSG = `EPSG:${geoRef.srid}`;
       const newCenter = transform([geoRef.anchor.x, geoRef.anchor.y], utmEPSG, 'EPSG:3857');
 
-      console.log('🗺️ Re-centering map to initial coordinates:', geoRef.anchor);
-      console.log('   Web Mercator:', newCenter);
+      // console.log('🗺️ Re-centering map to initial coordinates:', geoRef.anchor);
+      // console.log('   Web Mercator:', newCenter);
 
       mapRef.current.getView().animate({
         center: newCenter,
@@ -560,7 +560,7 @@ export const GeoRefCanvas: React.FC<GeoRefCanvasProps> = ({
       // Enable panning in 'none' mode (for background drag), disable in translate/rotate modes
       const shouldEnablePan = interactionMode === 'none';
       dragPan.setActive(shouldEnablePan);
-      console.log(`📍 Mode changed to '${interactionMode}', drag pan ${shouldEnablePan ? 'enabled' : 'disabled'}`);
+      // console.log(`📍 Mode changed to '${interactionMode}', drag pan ${shouldEnablePan ? 'enabled' : 'disabled'}`);
     }
   }, [interactionMode]);
 

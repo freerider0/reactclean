@@ -178,7 +178,7 @@ function findMatchingWall(
     });
 
     if (matchingWall) {
-      console.log(`✅ Wall match found (Strategy 0 - Vertex IDs): wall[${newWallIndex}] matched with vertex IDs ${v1.id} → ${v2.id}`);
+      // console.log(`✅ Wall match found (Strategy 0 - Vertex IDs): wall[${newWallIndex}] matched with vertex IDs ${v1.id} → ${v2.id}`);
       return matchingWall;
     } else {
       // Log when Strategy 0 fails - this is the primary cause of aperture loss
@@ -197,7 +197,7 @@ function findMatchingWall(
   if (newVertices.length === oldVertices.length) {
     const matchingWall = existingWalls.find(w => w.vertexIndex === newWallIndex);
     if (matchingWall) {
-      console.log(`✅ Wall match found (Strategy 1 - Topology): wall[${newWallIndex}] matched by vertex index`);
+      // console.log(`✅ Wall match found (Strategy 1 - Topology): wall[${newWallIndex}] matched by vertex index`);
       return matchingWall;
     }
   }
@@ -219,7 +219,7 @@ function findMatchingWall(
     const v2Match = Math.abs(v2.x - oldV2.x) < tolerance && Math.abs(v2.y - oldV2.y) < tolerance;
 
     if (v1Match && v2Match) {
-      console.log(`✅ Wall match found (Strategy 2 - Position): wall[${newWallIndex}] matched by exact position`);
+      // console.log(`✅ Wall match found (Strategy 2 - Position): wall[${newWallIndex}] matched by exact position`);
       return wall;
     }
   }
@@ -251,7 +251,7 @@ function findMatchingWall(
         v2
       );
 
-      console.log(`✅ Wall match found (Strategy 3 - Subsegment): wall[${newWallIndex}] is a subsegment of old wall`);
+      // console.log(`✅ Wall match found (Strategy 3 - Subsegment): wall[${newWallIndex}] is a subsegment of old wall`);
       // Return wall with filtered apertures
       return {
         ...wall,
@@ -670,7 +670,7 @@ export function generateWallsFromEnvelope(
         wallStartId = candidateWall.startVertexId;
         wallEndId = candidateWall.endVertexId;
         matchedWall = candidateWall;
-        console.log(`🗺️ Envelope wall ${i} → using existing wall[${i}] IDs: ${wallStartId?.substring(0,8)} → ${wallEndId?.substring(0,8)}`);
+        // console.log(`🗺️ Envelope wall ${i} → using existing wall[${i}] IDs: ${wallStartId?.substring(0,8)} → ${wallEndId?.substring(0,8)}`);
       }
     }
 
@@ -678,7 +678,7 @@ export function generateWallsFromEnvelope(
     let apertures: Wall['apertures'] = [];
     let preservedHeight: number | undefined;
     if (matchedWall) {
-      console.log(`✅ generateWallsFromEnvelope: Matched envelope wall ${i} to existing wall (${matchedWall.apertures?.length || 0} apertures)`);
+      // console.log(`✅ generateWallsFromEnvelope: Matched envelope wall ${i} to existing wall (${matchedWall.apertures?.length || 0} apertures)`);
       apertures = matchedWall.apertures ?? [];
       thickness = matchedWall.thickness;
       preservedHeight = matchedWall.height;

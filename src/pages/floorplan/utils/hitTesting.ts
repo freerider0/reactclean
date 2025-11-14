@@ -499,7 +499,7 @@ export function hitTestApertures(
   room.walls.forEach(w => totalApertures += (w.apertures?.length || 0));
 
   if (totalApertures > 0) {
-    console.log(`    🔍 hitTestApertures: Testing ${totalApertures} apertures in room ${room.id}`);
+    // console.log(`    🔍 hitTestApertures: Testing ${totalApertures} apertures in room ${room.id}`);
   }
 
   for (let wallIndex = 0; wallIndex < room.walls.length; wallIndex++) {
@@ -535,7 +535,7 @@ export function hitTestApertures(
 
     // Test each aperture on this wall
     for (const aperture of wall.apertures) {
-      console.log(`      Testing ${aperture.type} ${aperture.id.substring(0, 8)}...`);
+      // console.log(`      Testing ${aperture.type} ${aperture.id.substring(0, 8)}...`);
 
       // Convert aperture dimensions from meters to pixels
       const apertureWidthPx = aperture.width * 100;
@@ -548,7 +548,7 @@ export function hitTestApertures(
         startDist = aperture.distance * 100;
       }
 
-      console.log(`        Wall length: ${wallLength.toFixed(1)}px, Start dist: ${startDist.toFixed(1)}px, Width: ${apertureWidthPx.toFixed(1)}px`);
+      // console.log(`        Wall length: ${wallLength.toFixed(1)}px, Start dist: ${startDist.toFixed(1)}px, Width: ${apertureWidthPx.toFixed(1)}px`);
 
       // Calculate aperture corners on room edge (inner edge)
       const roomEdgeStartX = v1World.x + dirX * startDist;
@@ -584,9 +584,9 @@ export function hitTestApertures(
       const aperturePolygon = [innerStart, innerEnd, outerEnd, outerStart];
       const isInside = pointInPolygon(worldPoint, aperturePolygon);
 
-      console.log(`        Polygon: [${aperturePolygon.map(p => `(${p.x.toFixed(0)},${p.y.toFixed(0)})`).join(', ')}]`);
-      console.log(`        Point: (${worldPoint.x.toFixed(0)}, ${worldPoint.y.toFixed(0)})`);
-      console.log(`        Result: ${isInside ? '✅ HIT!' : '❌ miss'}`);
+      // console.log(`        Polygon: [${aperturePolygon.map(p => `(${p.x.toFixed(0)},${p.y.toFixed(0)})`).join(', ')}]`);
+      // console.log(`        Point: (${worldPoint.x.toFixed(0)}, ${worldPoint.y.toFixed(0)})`);
+      // console.log(`        Result: ${isInside ? '✅ HIT!' : '❌ miss'}`);
 
       if (isInside) {
         return { wallIndex, apertureId: aperture.id };

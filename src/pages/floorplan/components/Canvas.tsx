@@ -686,7 +686,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           viewport,
           lastSnapResult.current.movingRoomId,
           lastSnapResult.current.stationaryRoomId,
-          { x: 0, y: 0 } // Room position already includes drag offset
+          { x: 0, y: 0 }, // Room position already includes drag offset
+          lastSnapResult.current.isDoorSnap // Pass door snap status
         );
       }
     }
@@ -730,12 +731,12 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       v1Index = Math.floor(edgeIndex / 1000);
       v2Index = edgeIndex % 1000;
       isDiagonal = true;
-      console.log('📝 Editing diagonal constraint between v', v1Index, 'and v', v2Index);
+      // console.log('📝 Editing diagonal constraint between v', v1Index, 'and v', v2Index);
     } else {
       // Edge constraint (adjacent vertices)
       v1Index = edgeIndex;
       v2Index = (edgeIndex + 1) % room.vertices.length;
-      console.log('📝 Editing edge constraint between v', v1Index, 'and v', v2Index);
+      // console.log('📝 Editing edge constraint between v', v1Index, 'and v', v2Index);
     }
 
     // Find existing distance constraint for these vertices
@@ -748,11 +749,11 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
     if (existingConstraint) {
       // Update existing constraint by removing old and adding new
-      console.log('  ✏️ Updating existing constraint', existingConstraint.id, 'from', existingConstraint.value, 'to', newValueCm);
+      // console.log('  ✏️ Updating existing constraint', existingConstraint.id, 'from', existingConstraint.value, 'to', newValueCm);
       const removeConstraint = useFloorplanStore.getState().removeConstraint;
       removeConstraint(roomId, existingConstraint.id);
     } else {
-      console.log('  ➕ Creating new constraint with value', newValueCm);
+      // console.log('  ➕ Creating new constraint with value', newValueCm);
     }
 
     // Add new constraint with updated value
@@ -776,7 +777,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
    * - Edit mode: Add vertex at click position
    */
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    console.log('🖱️🖱️ Double click detected:', { editorMode });
+    // console.log('🖱️🖱️ Double click detected:', { editorMode });
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -804,13 +805,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     // Edit mode - double-click on vertex to delete it, or on edge to add vertex, or on aperture to edit it
     if (editorMode === EditorMode.Edit) {
       const selectedRoom = getSelectedRoom();
-      console.log('🖱️ Edit mode double-click at world:', worldPoint);
-      console.log('  Hit result:', hitResult);
+      // console.log('🖱️ Edit mode double-click at world:', worldPoint);
+      // console.log('  Hit result:', hitResult);
 
       if (selectedRoom) {
         // Priority 1: Aperture (open edit modal)
         if (hitResult.aperture && hitResult.aperture.roomId === selectedRoom.id) {
-          console.log('  ✅ HIT APERTURE:', hitResult.aperture);
+          // console.log('  ✅ HIT APERTURE:', hitResult.aperture);
           selectAperture(hitResult.aperture.apertureId, hitResult.aperture.wallIndex);
           return;
         }
@@ -818,20 +819,20 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         // Priority 2: Vertex (delete it)
         if (hitResult.vertex && hitResult.vertex.roomId === selectedRoom.id) {
           if (selectedRoom.vertices.length > 3) {
-            console.log('🗑️ Delete vertex on double-click:', hitResult.vertex.vertexIndex);
+            // console.log('🗑️ Delete vertex on double-click:', hitResult.vertex.vertexIndex);
             const result = calculateDeleteVertex({
               room: selectedRoom,
               vertexIndex: hitResult.vertex.vertexIndex
             });
 
             if (result) {
-              console.log('✅ Vertex deleted successfully');
+              // console.log('✅ Vertex deleted successfully');
               updateRoom(selectedRoom.id, result);
               if (recalculateAllEnvelopes) {
                 setTimeout(async () => await recalculateAllEnvelopes(), 0);
               }
             } else {
-              console.log('❌ Failed to delete vertex (need at least 3 vertices)');
+              // console.log('❌ Failed to delete vertex (need at least 3 vertices)');
             }
             return;
           }
@@ -839,7 +840,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
         // Priority 3: Add vertex to closest edge
         if (hitResult.closestEdge && hitResult.closestEdge.roomId === selectedRoom.id) {
-          console.log('➕ Edit mode double click - adding vertex to edge:', hitResult.closestEdge.wallIndex);
+          // console.log('➕ Edit mode double click - adding vertex to edge:', hitResult.closestEdge.wallIndex);
           // Use the edge from hit result
           const closestEdge = hitResult.closestEdge.wallIndex;
           const result = calculateAddVertexToEdge({
@@ -849,13 +850,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           });
 
           if (result) {
-            console.log('✅ Vertex added successfully, updating room');
+            // console.log('✅ Vertex added successfully, updating room');
             updateRoom(selectedRoom.id, result);
             if (recalculateAllEnvelopes) {
               recalculateAllEnvelopes();
             }
           } else {
-            console.log('❌ Failed to add vertex');
+            // console.log('❌ Failed to add vertex');
           }
         }
       }
@@ -908,27 +909,20 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
     // Left click
     if (e.button === 0) {
-      console.log('🖱️ Left click detected:', {
-        editorMode,
-        toolMode,
-        isDrawing: drawing.isDrawing,
-        vertexCount: drawing.vertices.length
-      });
-
       // Check for dimension label click first (if dimensions are shown)
       if (config.showDimensions) {
         const hitLabel = editableDimensions.hitTestDimensionLabel(screenX, screenY);
         if (hitLabel) {
-          console.log('Dimension label clicked:', hitLabel);
+          // console.log('Dimension label clicked:', hitLabel);
           editableDimensions.startEditingDimension(hitLabel);
-          console.log('Editing dimension state:', editableDimensions.editingDimension);
+          // console.log('Editing dimension state:', editableDimensions.editingDimension);
           return;
         }
       }
 
       // Drawing mode
       if (editorMode === EditorMode.Draw && toolMode === ToolMode.DrawRoom) {
-        console.log('📐 In drawing mode, processing click...');
+        // console.log('📐 In drawing mode, processing click...');
         if (!drawing.isDrawing) {
           // Start drawing - calculate snap for first vertex
           const snapResult = snapWithPriority(
@@ -954,18 +948,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             const firstVertex = drawing.vertices[0];
             const distToFirst = distance(worldPoint, firstVertex);
 
-            console.log('🔍 Polygon closing check on CLICK (raw distance to first):', {
-              vertexCount: drawing.vertices.length,
-              distanceToFirst: distToFirst.toFixed(2),
-              threshold: CLOSE_THRESHOLD,
-              willClose: distToFirst < CLOSE_THRESHOLD,
-              worldPoint,
-              firstVertex
-            });
-
             if (distToFirst < CLOSE_THRESHOLD) {
               // Close polygon and create room
-              console.log('✅ Closing polygon!');
+              // console.log('✅ Closing polygon!');
               finishDrawing();
               return;
             }
@@ -987,7 +972,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           const snapPos = snapResult.position || worldPoint;
 
           // Add the snapped vertex with UUID
-          console.log('➕ Adding vertex at:', snapPos);
+          // console.log('➕ Adding vertex at:', snapPos);
           const vertexWithId = createVertex(snapPos.x, snapPos.y);
           addDrawingVertex(vertexWithId);
         }
@@ -1004,36 +989,36 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           if (vertexIndex !== -1) {
             // Check if in diagonal constraint mode
             if (selection.diagonalConstraintMode) {
-              console.log('🎯 Diagonal mode: clicked vertex', vertexIndex);
-              console.log('  Current selection:', selection.diagonalVertices);
+              // console.log('🎯 Diagonal mode: clicked vertex', vertexIndex);
+              // console.log('  Current selection:', selection.diagonalVertices);
 
               // Calculate what the new length will be after adding this vertex
               const currentVertices = selection.diagonalVertices;
               const alreadySelected = currentVertices.includes(vertexIndex);
 
               if (alreadySelected) {
-                console.log('  ⚠️ Vertex already selected, ignoring');
+                // console.log('  ⚠️ Vertex already selected, ignoring');
                 return;
               }
 
               // Add vertex to diagonal selection
               addDiagonalVertex(vertexIndex);
-              console.log('  ✅ Added vertex to selection');
+              // console.log('  ✅ Added vertex to selection');
 
               // Check if we now have 2 vertices (will have after adding)
               const newLength = currentVertices.length + 1;
-              console.log('  New length will be:', newLength);
+              // console.log('  New length will be:', newLength);
 
               if (newLength === 2) {
                 // Create constraint with both vertices
                 const v1 = currentVertices[0];
                 const v2 = vertexIndex;
-                console.log('  🔧 Creating distance constraint between v', v1, 'and v', v2);
+                // console.log('  🔧 Creating distance constraint between v', v1, 'and v', v2);
 
                 const constraint = createDistanceConstraint(selectedRoom, v1, v2);
                 addConstraint(selectedRoom.id, constraint, true);
                 clearDiagonalConstraintMode();
-                console.log('  ✅ Constraint created and diagonal mode cleared');
+                // console.log('  ✅ Constraint created and diagonal mode cleared');
               }
               return;
             }
@@ -1050,7 +1035,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         if (selectedRoom) {
           const apertureHit = hitTestApertures(worldPoint, selectedRoom);
           if (apertureHit) {
-            console.log(`🚪 Aperture hit detected: ${apertureHit.apertureId} on wall ${apertureHit.wallIndex}`);
+            // console.log(`🚪 Aperture hit detected: ${apertureHit.apertureId} on wall ${apertureHit.wallIndex}`);
 
             // Start long press timer for copy operation
             longPressStartPos.current = { x: screenX, y: screenY };
@@ -1066,7 +1051,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
             longPressTimer.current = setTimeout(() => {
               // Long press completed - trigger copy
-              console.log('⏱️ Long press completed - copying aperture');
+              // console.log('⏱️ Long press completed - copying aperture');
               copyAperture(selectedRoom.id, apertureHit.wallIndex, apertureHit.apertureId);
 
               // Show visual feedback
@@ -1140,7 +1125,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             });
 
             if (closestRoomId && closestEdgeIndex !== -1) {
-              console.log(`🎯 Clicked envelope area - Closest edge: Room ${closestRoomId}, Edge ${closestEdgeIndex}, Distance: ${minDistance.toFixed(2)}cm`);
+              // console.log(`🎯 Clicked envelope area - Closest edge: Room ${closestRoomId}, Edge ${closestEdgeIndex}, Distance: ${minDistance.toFixed(2)}cm`);
 
               // Select the room if not already selected
               selectRoom(closestRoomId);
@@ -1149,13 +1134,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
               // Start long press timer for paste operation (if clipboard has data)
               if (apertureClipboard) {
-                console.log('📋 Aperture clipboard has data, starting long press timer for paste');
+                // console.log('📋 Aperture clipboard has data, starting long press timer for paste');
                 longPressStartPos.current = { x: screenX, y: screenY };
                 isLongPressing.current = true;
 
                 longPressTimer.current = setTimeout(() => {
                   // Long press completed - trigger paste
-                  console.log('⏱️ Long press completed on wall - pasting aperture');
+                  // console.log('⏱️ Long press completed on wall - pasting aperture');
 
                   // Find closest wall to paste on
                   let targetRoomId: string | null = null;
@@ -1209,7 +1194,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
                   }
 
                   if (targetRoomId && targetWallIndex !== null) {
-                    console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+                    // console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
                     pasteAperture(targetRoomId, targetWallIndex, targetDistance, targetAnchor);
 
                     // Show visual feedback
@@ -1269,7 +1254,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
       // Assembly mode - room selection, dragging, and rotation
       if (editorMode === EditorMode.Assembly) {
-        console.log('🏠 Assembly mode click');
+        // console.log('🏠 Assembly mode click');
 
         // Perform comprehensive hit testing - ONE call, ALL data
         const hitResult = performHitTest(worldPoint, {
@@ -1278,13 +1263,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           selection
         });
 
-        console.log('Hit test result:', hitResult);
+        // console.log('Hit test result:', hitResult);
 
         // Priority 1: Rotation handle
         if (hitResult.rotationHandle) {
           const room = rooms.find(r => r.id === hitResult.rotationHandle!.roomId);
           if (room) {
-            console.log('🎯 Rotation handle clicked!');
+            // console.log('🎯 Rotation handle clicked!');
             assemblyDragState.current = createRotationDragState(room, worldPoint);
             assemblyDragScreenStart.current = { x: screenX, y: screenY };
             return;
@@ -1294,12 +1279,12 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         // Priority 2: Vertex (for precise editing)
         if (hitResult.vertex) {
           // Could implement vertex dragging here if needed
-          console.log('🎯 Vertex clicked:', hitResult.vertex.vertexId);
+          // console.log('🎯 Vertex clicked:', hitResult.vertex.vertexId);
         }
 
         // Priority 3: Aperture (door/window)
         if (hitResult.aperture) {
-          console.log('🎯 Aperture clicked:', hitResult.aperture.apertureId);
+          // console.log('🎯 Aperture clicked:', hitResult.aperture.apertureId);
           // Handle aperture interaction if needed
         }
 
@@ -1307,12 +1292,12 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         if (hitResult.room) {
           const room = rooms.find(r => r.id === hitResult.room!.roomId);
           if (room) {
-            console.log('🎯 Room clicked:', room.id);
+            // console.log('🎯 Room clicked:', room.id);
             selectRoom(room.id, e.shiftKey);
 
             // If there's a closest segment, select it for highlighting
             if (hitResult.closestSegment) {
-              console.log('📏 Closest segment:', hitResult.closestSegment);
+              // console.log('📏 Closest segment:', hitResult.closestSegment);
               selectSegment(
                 hitResult.closestSegment.roomId,
                 hitResult.closestSegment.wallIndex,
@@ -1363,7 +1348,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
       if (distance > LONG_PRESS_MOVE_THRESHOLD) {
         // Movement exceeded threshold - cancel long press and start drag
-        console.log('🚫 Long press cancelled due to movement - starting drag');
+        // console.log('🚫 Long press cancelled due to movement - starting drag');
         clearLongPressTimer();
         // Drag will be handled by existing edit mode logic below
       }
@@ -1570,7 +1555,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             worldPoint,
             snapEnabled: config.snapEnabled
           });
-          console.log('🔄 Rotating room to:', (newRotation * 180 / Math.PI).toFixed(1), 'degrees');
+          // console.log('🔄 Rotating room to:', (newRotation * 180 / Math.PI).toFixed(1), 'degrees');
           updateRoom(selectedRoomId, { rotation: newRotation });
           return;
         } else if (assemblyDragState.current.dragType === 'room') {
@@ -1631,7 +1616,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
       // Only trigger paste if movement was below threshold (user held still)
       if (distance <= LONG_PRESS_MOVE_THRESHOLD) {
-        console.log('⏱️ Long press released - checking for wall paste');
+        // console.log('⏱️ Long press released - checking for wall paste');
 
         // Find closest wall across ALL rooms
         let targetRoomId: string | null = null;
@@ -1685,7 +1670,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         }
 
         if (targetRoomId && targetWallIndex !== null) {
-          console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+          // console.log(`📌 Pasting aperture to room ${targetRoomId} wall ${targetWallIndex}`);
           pasteAperture(targetRoomId, targetWallIndex, targetDistance, targetAnchor);
 
           // Show visual feedback
@@ -1850,7 +1835,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
                 if (validation.isValid) {
                   // Move aperture to new position
                   if (isSameRoom) {
-                    console.log(`✅ Moving aperture ${apertureId} within room ${sourceRoomId} from wall ${sourceWallIndex} to wall ${result.targetWallIndex}`);
+                    // console.log(`✅ Moving aperture ${apertureId} within room ${sourceRoomId} from wall ${sourceWallIndex} to wall ${result.targetWallIndex}`);
                     moveAperture(
                       sourceRoomId,
                       sourceWallIndex,
@@ -1860,7 +1845,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
                       result.newAnchor
                     );
                   } else {
-                    console.log(`✅ Moving aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${result.targetWallIndex}`);
+                    // console.log(`✅ Moving aperture ${apertureId} from room ${sourceRoomId} wall ${sourceWallIndex} to room ${targetRoomId} wall ${result.targetWallIndex}`);
                     moveApertureCrossRoom(
                       sourceRoomId,
                       sourceWallIndex,
@@ -1873,7 +1858,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
                   }
                 } else if (validation.reason === 'collision' && validation.suggestedPosition) {
                   // Use suggested position
-                  console.log(`⚠️ Collision detected, using suggested position`);
+                  // console.log(`⚠️ Collision detected, using suggested position`);
                   if (isSameRoom) {
                     moveAperture(
                       sourceRoomId,
@@ -1927,7 +1912,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         const selectedRoomId = getFirstSelectedRoomId();
 
         if (selectedRoomId) {
-          console.log('✅ Rotation complete - walls preserved (vertex IDs stable)');
+          // console.log('✅ Rotation complete - walls preserved (vertex IDs stable)');
 
           // Recalculate envelopes
           if (recalculateAllEnvelopes) {
@@ -1965,7 +1950,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             // If rotation changed, just update rotation - walls stay valid (vertex IDs stable)
             if (finalSnap.rotation !== undefined) {
               updates.rotation = finalSnap.rotation;
-              console.log('✅ Room snap with rotation - walls preserved (vertex IDs stable)');
+              // console.log('✅ Room snap with rotation - walls preserved (vertex IDs stable)');
             }
 
             updateRoom(selectedRoomId, updates);
@@ -2046,7 +2031,6 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       {/* Dimension input overlay */}
       {editableDimensions.editingDimension && (
         <>
-          {console.log('Rendering DimensionInput with:', editableDimensions.editingDimension)}
           <DimensionInput
             position={editableDimensions.editingDimension.position}
             currentValue={editableDimensions.editingDimension.currentValue}

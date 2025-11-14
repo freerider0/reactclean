@@ -9,7 +9,7 @@
  *     id: 'settings',
  *     label: 'Settings',
  *     icon: <SettingsIcon />,
- *     onSelect: () => console.log('Settings clicked')
+ *     onSelect: () => // console.log('Settings clicked')
  *   }
  * ];
  *

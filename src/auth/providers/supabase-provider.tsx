@@ -28,7 +28,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log('Auth state changed:', _event);
+      // console.log('Auth state changed:', _event);
       if (isMounted) {
         setSession(session);
         // Mark initial load as complete after INITIAL_SESSION event

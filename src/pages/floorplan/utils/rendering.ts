@@ -1711,7 +1711,8 @@ export function drawDoorCenters(
   viewport: Viewport,
   movingRoomId?: string,
   stationaryRoomId?: string,
-  movingRoomOffset?: Vertex
+  movingRoomOffset?: Vertex,
+  isDoorSnap?: boolean
 ): void {
   ctx.save();
 
@@ -1773,6 +1774,114 @@ export function drawDoorCenters(
     };
   };
 
+  // Find room objects
+  const movingRoom = movingRoomId ? rooms.find(r => r.id === movingRoomId) : undefined;
+  const stationaryRoom = stationaryRoomId ? rooms.find(r => r.id === stationaryRoomId) : undefined;
+
+  // Helper to find closest wall index using midpoint comparison (same as roomJoining.ts)
+  const findClosestWallIndex = (
+    currentRoom: Room,
+    otherRoom: Room,
+    currentRoomOffset: Vertex = { x: 0, y: 0 }
+  ): number => {
+    if (!currentRoom.walls || !otherRoom.vertices) return -1;
+
+    // Step 1: Find closest segment on OTHER room to current room
+    let minSegmentDist = Infinity;
+    let closestSegmentMid: Vertex | null = null;
+
+    for (let i = 0; i < otherRoom.vertices.length; i++) {
+      const v1 = otherRoom.vertices[i];
+      const v2 = otherRoom.vertices[(i + 1) % otherRoom.vertices.length];
+
+      // Transform to world coordinates
+      const cos = Math.cos(otherRoom.rotation);
+      const sin = Math.sin(otherRoom.rotation);
+      const v1World = {
+        x: otherRoom.position.x + (v1.x * cos - v1.y * sin) * otherRoom.scale,
+        y: otherRoom.position.y + (v1.x * sin + v1.y * cos) * otherRoom.scale
+      };
+      const v2World = {
+        x: otherRoom.position.x + (v2.x * cos - v2.y * sin) * otherRoom.scale,
+        y: otherRoom.position.y + (v2.x * sin + v2.y * cos) * otherRoom.scale
+      };
+
+      // Segment midpoint
+      const segMid = {
+        x: (v1World.x + v2World.x) / 2,
+        y: (v1World.y + v2World.y) / 2
+      };
+
+      // Calculate distance from segment to current room (approximate with centroid)
+      const currentCentroidX = currentRoom.position.x + currentRoomOffset.x;
+      const currentCentroidY = currentRoom.position.y + currentRoomOffset.y;
+      const dist = Math.sqrt(
+        (segMid.x - currentCentroidX) ** 2 + (segMid.y - currentCentroidY) ** 2
+      );
+
+      if (dist < minSegmentDist) {
+        minSegmentDist = dist;
+        closestSegmentMid = segMid;
+      }
+    }
+
+    if (!closestSegmentMid) return -1;
+
+    // Step 2: Find wall in CURRENT room with midpoint closest to the segment midpoint
+    let closestWallIdx = -1;
+    let minWallDist = Infinity;
+
+    currentRoom.walls.forEach((wall, wallIndex) => {
+      const v1 = currentRoom.vertices[wall.vertexIndex];
+      const v2 = currentRoom.vertices[(wall.vertexIndex + 1) % currentRoom.vertices.length];
+
+      if (!v1 || !v2) return;
+
+      // Transform to world coordinates
+      const cos = Math.cos(currentRoom.rotation);
+      const sin = Math.sin(currentRoom.rotation);
+      const v1World = {
+        x: currentRoom.position.x + (v1.x * cos - v1.y * sin) * currentRoom.scale + currentRoomOffset.x,
+        y: currentRoom.position.y + (v1.x * sin + v1.y * cos) * currentRoom.scale + currentRoomOffset.y
+      };
+      const v2World = {
+        x: currentRoom.position.x + (v2.x * cos - v2.y * sin) * currentRoom.scale + currentRoomOffset.x,
+        y: currentRoom.position.y + (v2.x * sin + v2.y * cos) * currentRoom.scale + currentRoomOffset.y
+      };
+
+      // Wall midpoint
+      const wallMid = {
+        x: (v1World.x + v2World.x) / 2,
+        y: (v1World.y + v2World.y) / 2
+      };
+
+      // Distance between midpoints
+      const dist = Math.sqrt(
+        (wallMid.x - closestSegmentMid.x) ** 2 + (wallMid.y - closestSegmentMid.y) ** 2
+      );
+
+      if (dist < minWallDist) {
+        minWallDist = dist;
+        closestWallIdx = wallIndex;
+      }
+    });
+
+    return closestWallIdx;
+  };
+
+  // Calculate closest wall indices for each room
+  const movingRoomClosestWallIndex = movingRoom && stationaryRoom
+    ? findClosestWallIndex(movingRoom, stationaryRoom, movingRoomOffset || { x: 0, y: 0 })
+    : -1;
+
+  const stationaryRoomClosestWallIndex = stationaryRoom && movingRoom
+    ? findClosestWallIndex(stationaryRoom, movingRoom)
+    : -1;
+
+  // Track door centers for drawing connecting line
+  let movingDoorCenter: Vertex | null = null;
+  let stationaryDoorCenter: Vertex | null = null;
+
   // Draw door centers for each room
   rooms.forEach(room => {
     if (!room.walls || room.walls.length === 0) return;
@@ -1784,11 +1893,26 @@ export function drawDoorCenters(
     if (!isMovingRoom && !isStationaryRoom) return;
 
     // Determine color and offset
-    const color = isMovingRoom ? '#d946ef' : '#0dcaf0'; // Magenta for moving, cyan for stationary
+    // Use bright green when door snap is active, otherwise magenta/cyan
+    let color: string;
+    if (isDoorSnap) {
+      color = '#10b981'; // Bright green for active door snap
+    } else {
+      color = isMovingRoom ? '#d946ef' : '#0dcaf0'; // Magenta for moving, cyan for stationary
+    }
     const offset = isMovingRoom && movingRoomOffset ? movingRoomOffset : { x: 0, y: 0 };
 
-    // Iterate through all walls
+    // Get the closest wall index for this room
+    const closestWallIndex = isMovingRoom ? movingRoomClosestWallIndex : stationaryRoomClosestWallIndex;
+
+    // Only show doors on the closest wall (orange wall)
+    if (closestWallIndex === -1) return;
+
+    // Iterate through walls, but only draw doors on the closest wall
     room.walls.forEach((wall, wallIndex) => {
+      // Skip walls that are not the closest wall
+      if (wallIndex !== closestWallIndex) return;
+
       if (!wall.apertures || wall.apertures.length === 0) return;
 
       // Draw each door's center
@@ -1797,6 +1921,13 @@ export function drawDoorCenters(
 
         const doorCenter = getDoorCenter(room, wallIndex, aperture, offset);
         if (!doorCenter) return;
+
+        // Store door centers for drawing connection line
+        if (isMovingRoom) {
+          movingDoorCenter = doorCenter;
+        } else if (isStationaryRoom) {
+          stationaryDoorCenter = doorCenter;
+        }
 
         const screenCenter = worldToScreen(doorCenter, viewport);
 
@@ -1822,6 +1953,23 @@ export function drawDoorCenters(
       });
     });
   });
+
+  // Draw connecting line between door centers when door snap is active
+  if (isDoorSnap && movingDoorCenter && stationaryDoorCenter) {
+    const screenMoving = worldToScreen(movingDoorCenter, viewport);
+    const screenStationary = worldToScreen(stationaryDoorCenter, viewport);
+
+    ctx.strokeStyle = '#10b981'; // Bright green
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 4]); // Dashed line
+
+    ctx.beginPath();
+    ctx.moveTo(screenMoving.x, screenMoving.y);
+    ctx.lineTo(screenStationary.x, screenStationary.y);
+    ctx.stroke();
+
+    ctx.setLineDash([]); // Reset to solid lines
+  }
 
   ctx.restore();
 }

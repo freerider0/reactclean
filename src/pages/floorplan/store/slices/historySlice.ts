@@ -66,7 +66,7 @@ export const createHistorySlice: StateCreator<
     const { past, present, future } = get().history;
 
     if (past.length === 0) {
-      console.log('Nothing to undo');
+      // console.log('Nothing to undo');
       return;
     }
 
@@ -83,7 +83,7 @@ export const createHistorySlice: StateCreator<
       state.rooms = new Map(previous.rooms);
     });
 
-    console.log(`↩️ Undo: ${get().history.present.description}`);
+    // console.log(`↩️ Undo: ${get().history.present.description}`);
   },
 
   /**
@@ -93,7 +93,7 @@ export const createHistorySlice: StateCreator<
     const { future, present } = get().history;
 
     if (future.length === 0) {
-      console.log('Nothing to redo');
+      // console.log('Nothing to redo');
       return;
     }
 
@@ -110,7 +110,7 @@ export const createHistorySlice: StateCreator<
       state.rooms = new Map(next.rooms);
     });
 
-    console.log(`↪️ Redo: ${get().history.present.description}`);
+    // console.log(`↪️ Redo: ${get().history.present.description}`);
   },
 
   /**

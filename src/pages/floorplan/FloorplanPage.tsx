@@ -112,10 +112,10 @@ export const FloorplanPage: React.FC = () => {
   // Load cadastral data if available
   useEffect(() => {
     if (propertyId) {
-      console.log('🏗️ FloorplanPage loaded with property context:');
-      console.log('  Property ID:', propertyId);
-      console.log('  Property Data:', propertyData);
-      console.log('  Return To:', returnTo);
+      // // console.log('🏗️ FloorplanPage loaded with property context:');
+      // // console.log('  Property ID:', propertyId);
+      // // console.log('  Property Data:', propertyData);
+      // // console.log('  Return To:', returnTo);
 
       // If we have a cadastral reference, load parcel data
       if (propertyData?.referenciaCatastral) {
@@ -125,27 +125,27 @@ export const FloorplanPage: React.FC = () => {
         const parcelRef = CatastroApiService.extractParcelRefcat(refcat);
 
         if (parcelRef.length === 14) {
-          console.log('📍 Loading cadastral data for:', parcelRef);
+          // // console.log('📍 Loading cadastral data for:', parcelRef);
           setIsLoadingCadastral(true);
 
           catastroApi.getParcela(parcelRef)
             .then(parcelaData => {
-              console.log('✅ Cadastral data loaded (RAW):', JSON.stringify(parcelaData, null, 2));
-              console.log('📊 Parcela data structure:', parcelaData);
-              console.log('🗺️ Geometria:', parcelaData?.parcela?.geometria);
-              console.log('📍 Coordenadas:', parcelaData?.parcela?.geometria?.coordenadas);
+              // // console.log('✅ Cadastral data loaded (RAW):', JSON.stringify(parcelaData, null, 2));
+              // // console.log('📊 Parcela data structure:', parcelaData);
+              // // console.log('🗺️ Geometria:', parcelaData?.parcela?.geometria);
+              // // console.log('📍 Coordenadas:', parcelaData?.parcela?.geometria?.coordenadas);
 
               // Store parcel geometry for GeoRefCanvas
               if (parcelaData?.parcela?.geometria?.wkt) {
                 setParcelWKT(parcelaData.parcela.geometria.wkt);
-                console.log('✅ Parcel WKT set:', parcelaData.parcela.geometria.wkt.substring(0, 100) + '...');
+                // // console.log('✅ Parcel WKT set:', parcelaData.parcela.geometria.wkt.substring(0, 100) + '...');
               } else {
                 console.warn('⚠️  No WKT found in response');
               }
 
               if (parcelaData?.parcela?.geometria?.srid) {
                 setParcelSRID(parcelaData.parcela.geometria.srid);
-                console.log('✅ Parcel SRID set:', parcelaData.parcela.geometria.srid);
+                // // console.log('✅ Parcel SRID set:', parcelaData.parcela.geometria.srid);
               } else {
                 console.warn('⚠️  No SRID found in response');
               }
@@ -160,10 +160,10 @@ export const FloorplanPage: React.FC = () => {
                   scale: 1.0,
                 };
 
-                console.log('📍 Initializing geo-reference with parcel centroid:', newGeoRef);
-                console.log('   X:', centroid.x);
-                console.log('   Y:', centroid.y);
-                console.log('   SRID:', parcelaData.parcela.geometria.srid);
+                // // console.log('📍 Initializing geo-reference with parcel centroid:', newGeoRef);
+                // // console.log('   X:', centroid.x);
+                // // console.log('   Y:', centroid.y);
+                // // console.log('   SRID:', parcelaData.parcela.geometria.srid);
 
                 setGeoReference(newGeoRef);
               } else {
@@ -180,7 +180,7 @@ export const FloorplanPage: React.FC = () => {
         }
       }
     } else {
-      console.log('🏗️ FloorplanPage loaded without property context (standalone mode)');
+      // // console.log('🏗️ FloorplanPage loaded without property context (standalone mode)');
     }
   }, [propertyId, propertyData, returnTo]);
 
@@ -194,8 +194,8 @@ export const FloorplanPage: React.FC = () => {
       return [];
     }
 
-    console.log(`🎯 Edge ${selectedEdgeIndex} selected for constraints`);
-    console.log(`  → room.vertices: ${selectedRoom.vertices.length}`);
+    // // console.log(`🎯 Edge ${selectedEdgeIndex} selected for constraints`);
+    // // console.log(`  → room.vertices: ${selectedRoom.vertices.length}`);
 
     // Edge index directly corresponds to the edge starting at vertex[index] and ending at vertex[index+1]
     return [selectedEdgeIndex];
@@ -212,7 +212,7 @@ export const FloorplanPage: React.FC = () => {
   // Initialize geoReference in store if not set (run once on mount)
   useEffect(() => {
     if (!geoReference) {
-      console.log('🔧 Initializing geoReference in store with:', initialGeoRef);
+      // // console.log('🔧 Initializing geoReference in store with:', initialGeoRef);
       setGeoReference(initialGeoRef);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

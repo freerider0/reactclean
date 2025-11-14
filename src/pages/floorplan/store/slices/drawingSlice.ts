@@ -82,9 +82,9 @@ export const createDrawingSlice: StateCreator<
    * Finish drawing and create the room
    */
   finishDrawing: () => {
-    console.log('🏁 finishDrawing called!');
+    // console.log('🏁 finishDrawing called!');
     const vertices = get().drawing.vertices;
-    console.log('📊 Vertices to process:', vertices.length, vertices);
+    // console.log('📊 Vertices to process:', vertices.length, vertices);
 
     if (vertices.length < 3) {
       console.warn('❌ Cannot finish drawing: need at least 3 vertices');
@@ -99,7 +99,7 @@ export const createDrawingSlice: StateCreator<
       return;
     }
 
-    console.log('✅ Polygon validation passed, creating room...');
+    // console.log('✅ Polygon validation passed, creating room...');
 
     // Ensure all vertices have IDs (safety net for backwards compatibility)
     // Note: As of UUID upgrade, vertices should already have IDs from drawing phase
@@ -127,7 +127,7 @@ export const createDrawingSlice: StateCreator<
     };
 
     // Calculate centerline vertices
-    const centerlineVertices = calculateCenterline(tempRoom as any);
+    const centerlineVertices = calculateCenterline(tempRoom as any).vertices;
 
     // Create the room with centered vertices and centroid as position
     const roomId = get().createRoom({
@@ -145,12 +145,12 @@ export const createDrawingSlice: StateCreator<
       color: '#c8dcff',
     });
 
-    console.log('🆕 New room created:', roomId);
+    // console.log('🆕 New room created:', roomId);
 
     // Recalculate envelope for the new room
     const recalcEnvelopes = get().recalculateAllEnvelopes;
     if (recalcEnvelopes) {
-      console.log('🔄 Recalculating envelopes for new room...');
+      // console.log('🔄 Recalculating envelopes for new room...');
       recalcEnvelopes();
     }
 
@@ -170,7 +170,7 @@ export const createDrawingSlice: StateCreator<
       state.drawingRoomId = null;
     });
 
-    console.log('✅ Entered edit mode for room:', roomId);
+    // console.log('✅ Entered edit mode for room:', roomId);
   },
 
   /**

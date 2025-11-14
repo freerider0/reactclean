@@ -51,21 +51,21 @@ export function useEditableDimensions() {
    * Check if a screen point hits any dimension label
    */
   const hitTestDimensionLabel = useCallback((screenX: number, screenY: number): DimensionLabel | null => {
-    console.log(`Hit testing at (${screenX}, ${screenY}), ${dimensionLabelsRef.current.size} labels registered`);
+    // console.log(`Hit testing at (${screenX}, ${screenY}), ${dimensionLabelsRef.current.size} labels registered`);
     for (const label of dimensionLabelsRef.current.values()) {
       const { bounds } = label;
-      console.log(`  Checking label bounds: x=${bounds.x}, y=${bounds.y}, w=${bounds.width}, h=${bounds.height}`);
+      // console.log(`  Checking label bounds: x=${bounds.x}, y=${bounds.y}, w=${bounds.width}, h=${bounds.height}`);
       if (
         screenX >= bounds.x &&
         screenX <= bounds.x + bounds.width &&
         screenY >= bounds.y &&
         screenY <= bounds.y + bounds.height
       ) {
-        console.log('  HIT!');
+        // console.log('  HIT!');
         return label;
       }
     }
-    console.log('  No hit');
+    // console.log('  No hit');
     return null;
   }, []);
 
@@ -73,14 +73,14 @@ export function useEditableDimensions() {
    * Start editing a dimension
    */
   const startEditingDimension = useCallback((label: DimensionLabel) => {
-    console.log('startEditingDimension called with:', label);
+    // console.log('startEditingDimension called with:', label);
     const newEditing = {
       roomId: label.roomId,
       edgeIndex: label.edgeIndex,
       position: label.position,
       currentValue: label.currentValue
     };
-    console.log('Setting editingDimension to:', newEditing);
+    // console.log('Setting editingDimension to:', newEditing);
     setEditingDimension(newEditing);
   }, []);
 

@@ -574,7 +574,7 @@ async function offsetPolygonOutward(vertices: Vertex[], offsetDistance: number, 
 
   // Detect bevel pairings (don't remove, just identify relationships)
   const pairings = detectBevelPairings(result);
-  console.log(`📋 Bevel pairings:`, pairings);
+  // console.log(`📋 Bevel pairings:`, pairings);
 
   return result;
 }
@@ -591,7 +591,7 @@ function detectBevelPairings(vertices: Vertex[]): number[] {
   const groupIds = new Array(n).fill(-1);
   let currentGroupId = 0;
 
-  console.log(`🔍 Detecting bevel pairings for ${n} vertices`);
+  // console.log(`🔍 Detecting bevel pairings for ${n} vertices`);
 
   for (let i = 0; i < n; i++) {
     if (groupIds[i] !== -1) continue; // Already assigned
@@ -617,12 +617,12 @@ function detectBevelPairings(vertices: Vertex[]): number[] {
       // This vertex is part of a bevel - pair it with next vertex
       groupIds[i] = currentGroupId;
       groupIds[(i + 1) % n] = currentGroupId;
-      console.log(`  🔗 Vertices ${i} and ${(i + 1) % n} are PAIRED (bevel group ${currentGroupId})`);
+      // console.log(`  🔗 Vertices ${i} and ${(i + 1) % n} are PAIRED (bevel group ${currentGroupId})`);
       currentGroupId++;
     } else {
       // Hard edge vertex - gets its own group
       groupIds[i] = currentGroupId;
-      console.log(`  ✅ Vertex ${i} is HARD EDGE (group ${currentGroupId})`);
+      // console.log(`  ✅ Vertex ${i} is HARD EDGE (group ${currentGroupId})`);
       currentGroupId++;
     }
   }
@@ -643,8 +643,8 @@ function insertCollinearVerticesFromPolygon(
 ): Vertex[] | null {
   if (!polygonWorld || polygonWorld.length === 0) return null;
 
-  console.log(`🔍 Checking room ${room.id} for collinear vertex insertion`);
-  console.log(`   Green polygon: ${polygonWorld.length} vertices`);
+  // console.log(`🔍 Checking room ${room.id} for collinear vertex insertion`);
+  // console.log(`   Green polygon: ${polygonWorld.length} vertices`);
 
   // Reset to original vertices before checking (remove previously auto-inserted vertices)
   // Use originalVertices if available, otherwise use current vertices
@@ -652,7 +652,7 @@ function insertCollinearVerticesFromPolygon(
     ? room.originalVertices
     : room.vertices;
 
-  console.log(`   Room vertices: ${baseVertices.length} (using ${room.originalVertices ? 'original' : 'current'})`);
+  // console.log(`   Room vertices: ${baseVertices.length} (using ${room.originalVertices ? 'original' : 'current'})`);
 
   // Transform base vertices to world coordinates
   const verticesWorld = baseVertices.map(v =>
@@ -727,9 +727,9 @@ function insertCollinearVerticesFromPolygon(
   }
 
   // Log statistics
-  console.log(`   Results: ${insertions.length} vertices to insert`);
+  // console.log(`   Results: ${insertions.length} vertices to insert`);
   if (insertions.length === 0) {
-    console.log(`   Skipped: ${skippedNotCollinear} not collinear, ${skippedNearEndpoint} near endpoint, ${skippedTooClose} too close to existing, ${skippedDegenerateEdge} degenerate edge`);
+    // console.log(`   Skipped: ${skippedNotCollinear} not collinear, ${skippedNearEndpoint} near endpoint, ${skippedTooClose} too close to existing, ${skippedDegenerateEdge} degenerate edge`);
   }
 
   // If no insertions, return null
@@ -757,9 +757,9 @@ function insertCollinearVerticesFromPolygon(
     }
   }
 
-  console.log(`✨ ${room.id}: Inserted ${insertions.length} collinear vertices (checked ${polygonWorld.length} green polygon vertices against ${baseVertices.length} room edges)`);
+  // console.log(`✨ ${room.id}: Inserted ${insertions.length} collinear vertices (checked ${polygonWorld.length} green polygon vertices against ${baseVertices.length} room edges)`);
   if (room.vertices.length !== baseVertices.length) {
-    console.log(`   ↳ Reset from ${room.vertices.length} to ${baseVertices.length} base vertices first`);
+    // console.log(`   ↳ Reset from ${room.vertices.length} to ${baseVertices.length} base vertices first`);
   }
   return newVertices;
 }
@@ -866,13 +866,13 @@ export async function calculateFloorplanEnvelopes(
     return envelopeMap;
   }
 
-  console.log(`Merging ${allRoomPaths.length} room paths with Clipper`);
+  // console.log(`Merging ${allRoomPaths.length} room paths with Clipper`);
 
   // EXPAND → UNION → CONTRACT technique
   // Slightly expand centerlines so near-touching edges overlap, union them, then contract back
   const EXPAND_AMOUNT = 10.0 * COORD_SCALE; // 10cm expansion
 
-  console.log(`Step 1: Expanding centerlines by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
+  // console.log(`Step 1: Expanding centerlines by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
   const expandedPaths = clipper.offsetToPaths({
     delta: EXPAND_AMOUNT,
     offsetInputs: [{
@@ -883,7 +883,7 @@ export async function calculateFloorplanEnvelopes(
     miterLimit: 1000.0 // Very high = sharp corners only
   });
 
-  console.log(`Step 2: Union of ${expandedPaths.length} expanded paths`);
+  // console.log(`Step 2: Union of ${expandedPaths.length} expanded paths`);
   const mergedExpandedPaths = clipper.clipToPaths({
     clipType: ClipType.Union,
     subjectInputs: [{
@@ -893,9 +893,9 @@ export async function calculateFloorplanEnvelopes(
     subjectFillType: PolyFillType.NonZero
   });
 
-  console.log(`Union produced ${mergedExpandedPaths.length} polygon(s)`);
+  // console.log(`Union produced ${mergedExpandedPaths.length} polygon(s)`);
 
-  console.log(`Step 3: Contracting merged polygons by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
+  // console.log(`Step 3: Contracting merged polygons by ${EXPAND_AMOUNT / COORD_SCALE}cm`);
   const mergedPaths = clipper.offsetToPaths({
     delta: -EXPAND_AMOUNT,
     offsetInputs: [{
@@ -906,10 +906,10 @@ export async function calculateFloorplanEnvelopes(
     miterLimit: 1000.0 // Very high = sharp corners only
   });
 
-  console.log(`Final result: ${mergedPaths.length} merged polygon(s)`);
+  // console.log(`Final result: ${mergedPaths.length} merged polygon(s)`);
 
   if (mergedPaths.length < allRoomPaths.length) {
-    console.log(`✅ Rooms merged: ${allRoomPaths.length} rooms → ${mergedPaths.length} polygon(s)`);
+    // console.log(`✅ Rooms merged: ${allRoomPaths.length} rooms → ${mergedPaths.length} polygon(s)`);
   } else {
     console.warn(`⚠️ No merge occurred - rooms may not have touching edges`);
   }
@@ -986,7 +986,7 @@ export async function calculateFloorplanEnvelopes(
 
     // Log which rooms were checked against this shared green polygon
     if (roomsInThisEnvelope.length > 1) {
-      console.log(`🔗 Merged envelope checked ${roomsInThisEnvelope.length} rooms: ${roomsInThisEnvelope.join(', ')}`);
+      // console.log(`🔗 Merged envelope checked ${roomsInThisEnvelope.length} rooms: ${roomsInThisEnvelope.join(', ')}`);
     }
   }
 

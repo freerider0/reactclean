@@ -211,7 +211,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
             state.pasteOffset = 0;
           });
 
-          console.log(`📋 Copied ${rooms.length} rooms to clipboard`);
+          // console.log(`📋 Copied ${rooms.length} rooms to clipboard`);
         },
 
         /**
@@ -220,7 +220,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
         cut: (roomIds) => {
           get().copy(roomIds);
           get().deleteRooms(roomIds);
-          console.log(`✂️ Cut ${roomIds.length} rooms`);
+          // console.log(`✂️ Cut ${roomIds.length} rooms`);
         },
 
         /**
@@ -229,7 +229,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
         paste: () => {
           const clipboard = get().clipboard;
           if (clipboard.length === 0) {
-            console.log('Nothing to paste');
+            // console.log('Nothing to paste');
             return;
           }
 
@@ -250,7 +250,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
             state.pasteOffset = offset;
           });
 
-          console.log(`📌 Pasted ${clipboard.length} rooms`);
+          // console.log(`📌 Pasted ${clipboard.length} rooms`);
         },
 
         /**
@@ -284,7 +284,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
             };
           });
 
-          console.log(`📋 Copied aperture ${apertureId} to clipboard`);
+          // console.log(`📋 Copied aperture ${apertureId} to clipboard`);
         },
 
         /**
@@ -293,7 +293,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
         pasteAperture: (targetRoomId, targetWallIndex, targetDistance, targetAnchor) => {
           const clipboard = get().apertureClipboard;
           if (!clipboard) {
-            console.log('No aperture to paste');
+            // console.log('No aperture to paste');
             return;
           }
 
@@ -336,7 +336,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
           // Push to history
           get().pushHistory(`Pasted aperture`);
 
-          console.log(`📌 Pasted aperture to room ${targetRoomId} wall ${targetWallIndex}`);
+          // console.log(`📌 Pasted aperture to room ${targetRoomId} wall ${targetWallIndex}`);
         },
 
         /**
@@ -347,7 +347,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
             state.apertureClipboard = null;
           });
 
-          console.log(`🗑️ Cleared aperture clipboard`);
+          // console.log(`🗑️ Cleared aperture clipboard`);
         },
 
         /**

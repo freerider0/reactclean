@@ -118,11 +118,11 @@ export async function calculateVertexDrag(params: {
   };
 
   // Regenerate walls (preserve existing wall properties by matching vertex positions)
-  console.log('🔧 calculateVertexDrag - Regenerating walls');
-  console.log('   New vertices IDs:', centeredVertices.map(v => v.id));
-  console.log('   Original vertices IDs:', dragState.originalVertices.map(v => v.id));
-  console.log('   Existing walls vertex IDs:', room.walls.map(w => `${w.startVertexId} → ${w.endVertexId}`));
-  console.log('   Existing walls apertures:', room.walls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
+  // console.log('🔧 calculateVertexDrag - Regenerating walls');
+  // console.log('   New vertices IDs:', centeredVertices.map(v => v.id));
+  // console.log('   Original vertices IDs:', dragState.originalVertices.map(v => v.id));
+  // console.log('   Existing walls vertex IDs:', room.walls.map(w => `${w.startVertexId} → ${w.endVertexId}`));
+  // console.log('   Existing walls apertures:', room.walls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
 
   const newWalls = generateWalls(
     centeredVertices,
@@ -131,7 +131,7 @@ export async function calculateVertexDrag(params: {
     dragState.originalVertices // Pass original vertices for matching
   );
 
-  console.log('   Generated walls apertures:', newWalls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
+  // console.log('   Generated walls apertures:', newWalls.map((w, i) => `wall[${i}]: ${w.apertures?.length || 0} apertures`));
 
   // Check if we need to auto-solve constraints in real-time
   const hasEnabledConstraints = room.constraints && room.constraints.some(c => c.enabled);
