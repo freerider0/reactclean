@@ -657,10 +657,102 @@ export function performHitTest(
       const wall = room.walls[apertureHit.wallIndex];
       const aperture = wall.apertures?.find(a => a.id === apertureHit.apertureId);
       if (aperture) {
+        let finalRoomId = room.id;
+        let finalWallIndex = apertureHit.wallIndex;
+        let finalApertureId = apertureHit.apertureId;
+
+        // For doors, check if there's a paired door in another room
+        if (aperture.type === 'door') {
+          // Calculate door center position
+          const worldVertices = room.vertices.map(v =>
+            localToWorld(v, room.position, room.rotation, room.scale)
+          );
+          const v1 = worldVertices[wall.vertexIndex];
+          const v2 = worldVertices[(wall.vertexIndex + 1) % worldVertices.length];
+          const wallDx = v2.x - v1.x;
+          const wallDy = v2.y - v1.y;
+          const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+          const apertureWidthPx = aperture.width * 100;
+          let startDist: number;
+          if (aperture.anchorVertex === 'end') {
+            startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+          } else {
+            startDist = aperture.distance * 100;
+          }
+          const doorCenterDist = startDist + apertureWidthPx / 2;
+          const currentCenter = {
+            x: v1.x + (wallDx / wallLength) * doorCenterDist,
+            y: v1.y + (wallDy / wallLength) * doorCenterDist
+          };
+
+          // Check other rooms for paired doors
+          let oldestRoom = room;
+          let oldestWallIndex = apertureHit.wallIndex;
+          let oldestApertureId = apertureHit.apertureId;
+
+          for (const otherRoom of rooms) {
+            if (otherRoom.id === room.id) continue;
+            if (!otherRoom.walls) continue;
+
+            const otherWorldVertices = otherRoom.vertices.map(v =>
+              localToWorld(v, otherRoom.position, otherRoom.rotation, otherRoom.scale)
+            );
+
+            for (let otherWallIndex = 0; otherWallIndex < otherRoom.walls.length; otherWallIndex++) {
+              const otherWall = otherRoom.walls[otherWallIndex];
+              if (!otherWall.apertures) continue;
+
+              for (const otherAperture of otherWall.apertures) {
+                if (otherAperture.type !== 'door') continue;
+
+                // Calculate other door center
+                const ov1 = otherWorldVertices[otherWall.vertexIndex];
+                const ov2 = otherWorldVertices[(otherWall.vertexIndex + 1) % otherWorldVertices.length];
+                const oWallDx = ov2.x - ov1.x;
+                const oWallDy = ov2.y - ov1.y;
+                const oWallLength = Math.sqrt(oWallDx * oWallDx + oWallDy * oWallDy);
+
+                const oApertureWidthPx = otherAperture.width * 100;
+                let oStartDist: number;
+                if (otherAperture.anchorVertex === 'end') {
+                  oStartDist = oWallLength - (otherAperture.distance * 100) - oApertureWidthPx;
+                } else {
+                  oStartDist = otherAperture.distance * 100;
+                }
+                const oDoorCenterDist = oStartDist + oApertureWidthPx / 2;
+                const otherCenter = {
+                  x: ov1.x + (oWallDx / oWallLength) * oDoorCenterDist,
+                  y: ov1.y + (oWallDy / oWallLength) * oDoorCenterDist
+                };
+
+                // Check if doors are at same position (within 5px threshold)
+                const dist = Math.sqrt(
+                  (currentCenter.x - otherCenter.x) ** 2 + (currentCenter.y - otherCenter.y) ** 2
+                );
+
+                if (dist < 5) {
+                  // Found a paired door - keep the one from the older room
+                  if ((otherRoom.createdAt || 0) < (oldestRoom.createdAt || 0)) {
+                    oldestRoom = otherRoom;
+                    oldestWallIndex = otherWallIndex;
+                    oldestApertureId = otherAperture.id;
+                  }
+                }
+              }
+            }
+          }
+
+          // Use the door from the oldest room
+          finalRoomId = oldestRoom.id;
+          finalWallIndex = oldestWallIndex;
+          finalApertureId = oldestApertureId;
+        }
+
         result.aperture = {
-          roomId: room.id,
-          wallIndex: apertureHit.wallIndex,
-          apertureId: apertureHit.apertureId,
+          roomId: finalRoomId,
+          wallIndex: finalWallIndex,
+          apertureId: finalApertureId,
           apertureType: aperture.type
         };
         break; // Take first aperture hit

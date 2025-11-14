@@ -31,7 +31,7 @@ export const createRoomsSlice: StateCreator<
    */
   createRoom: (roomData) => {
     const id = `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const room: Room = { ...roomData, id };
+    const room: Room = { ...roomData, id, createdAt: Date.now() };
 
     set((state) => {
       state.rooms.set(id, room);
@@ -119,6 +119,7 @@ export const createRoomsSlice: StateCreator<
       ...room,
       id: newId,
       name: `${room.name} (copy)`,
+      createdAt: Date.now(),
       position: {
         x: room.position.x + 100,
         y: room.position.y + 100
@@ -585,6 +586,7 @@ export const createRoomsSlice: StateCreator<
     return isOverConstrained(room);
   },
 
+
   /**
    * Recalculate envelopes for all rooms
    * Should be called after rooms are joined/positioned in assembly mode
@@ -707,10 +709,137 @@ export const createRoomsSlice: StateCreator<
               segmentVertices: updatedRoom.segmentVertices
             });
             const totalSegments = updatedRoom.walls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
-            // console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
+            console.log(`  Room ${updatedRoom.id}: ${totalSegments} segments across ${updatedRoom.walls.length} walls`);
           }
         });
         // console.log('✨ Wall segments calculated');
+
+        // Sync paired doors properties after wall segments are calculated
+        // Helper: Calculate door center in world coordinates
+        const getDoorCenter = (room: Room, wallIndex: number, aperture: any) => {
+          const wall = room.walls[wallIndex];
+          if (!wall) return null;
+
+          const vertices = room.vertices;
+          const v1Local = vertices[wall.vertexIndex];
+          const v2Local = vertices[(wall.vertexIndex + 1) % vertices.length];
+
+          // Transform to world
+          const localToWorld = (v: any) => ({
+            x: (v.x * Math.cos(room.rotation) - v.y * Math.sin(room.rotation)) * room.scale + room.position.x,
+            y: (v.x * Math.sin(room.rotation) + v.y * Math.cos(room.rotation)) * room.scale + room.position.y
+          });
+
+          const v1 = localToWorld(v1Local);
+          const v2 = localToWorld(v2Local);
+
+          const dx = v2.x - v1.x;
+          const dy = v2.y - v1.y;
+          const wallLength = Math.sqrt(dx * dx + dy * dy);
+
+          const anchorPos = aperture.anchorVertex === 'start' ? v1 : v2;
+          const direction = aperture.anchorVertex === 'start' ? 1 : -1;
+
+          return {
+            x: anchorPos.x + (dx / wallLength) * aperture.distance * direction,
+            y: anchorPos.y + (dy / wallLength) * aperture.distance * direction
+          };
+        };
+
+        // Process each room to sync paired doors
+        const roomsArray = Array.from(state.rooms.values());
+        console.log('🔄 Starting door sync for', roomsArray.length, 'rooms');
+        for (const currentRoom of roomsArray) {
+          if (!currentRoom.walls) continue;
+
+          let roomModified = false;
+          const updatedWalls = [...currentRoom.walls];
+          const segmentsBeforeSync = currentRoom.walls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
+          console.log(`  Room ${currentRoom.id}: ${segmentsBeforeSync} segments BEFORE sync`);
+
+          for (let wallIndex = 0; wallIndex < currentRoom.walls.length; wallIndex++) {
+            const wall = currentRoom.walls[wallIndex];
+            if (!wall.apertures) continue;
+
+            let wallModified = false;
+            const updatedApertures = [...wall.apertures];
+
+            for (let apertureIndex = 0; apertureIndex < wall.apertures.length; apertureIndex++) {
+              const aperture = wall.apertures[apertureIndex];
+              if (aperture.type !== 'door') continue;
+
+              const currentCenter = getDoorCenter(currentRoom, wallIndex, aperture);
+              if (!currentCenter) continue;
+
+              // Check against all other rooms
+              for (const otherRoom of roomsArray) {
+                if (otherRoom.id === currentRoom.id) continue;
+                if (!otherRoom.walls) continue;
+
+                for (let otherWallIndex = 0; otherWallIndex < otherRoom.walls.length; otherWallIndex++) {
+                  const otherWall = otherRoom.walls[otherWallIndex];
+                  if (!otherWall.apertures) continue;
+
+                  for (const otherAperture of otherWall.apertures) {
+                    if (otherAperture.type !== 'door') continue;
+
+                    const otherCenter = getDoorCenter(otherRoom, otherWallIndex, otherAperture);
+                    if (!otherCenter) continue;
+
+                    // Check if doors are at same position (within 5px)
+                    const dist = Math.sqrt(
+                      (currentCenter.x - otherCenter.x) ** 2 + (currentCenter.y - otherCenter.y) ** 2
+                    );
+
+                    if (dist < 5) {
+                      // Found paired door - determine which room is older
+                      const currentIsOlder = (currentRoom.createdAt || 0) < (otherRoom.createdAt || 0);
+                      console.log(`    🚪 Found paired door: current=${currentRoom.id}(${currentRoom.createdAt}), other=${otherRoom.id}(${otherRoom.createdAt}), currentIsOlder=${currentIsOlder}`);
+
+                      if (!currentIsOlder) {
+                        // Other room is older - copy its properties to current room's door
+                        console.log(`      → Copying from ${otherRoom.id} to ${currentRoom.id}`);
+                        updatedApertures[apertureIndex] = {
+                          ...aperture,
+                          width: otherAperture.width,
+                          height: otherAperture.height,
+                          distance: otherAperture.distance,
+                          anchorVertex: otherAperture.anchorVertex,
+                          sillHeight: otherAperture.sillHeight,
+                          cristal: otherAperture.cristal,
+                          color: otherAperture.color,
+                          material: otherAperture.material,
+                          persiana: otherAperture.persiana,
+                          porcentajeMarco: otherAperture.porcentajeMarco
+                        };
+                        wallModified = true;
+                        roomModified = true;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            if (wallModified) {
+              updatedWalls[wallIndex] = {
+                ...wall,
+                apertures: updatedApertures
+              };
+            }
+          }
+
+          if (roomModified) {
+            // Update the room in state with synced door properties
+            const segmentsAfterSync = updatedWalls.reduce((sum, wall) => sum + (wall.segments?.length || 0), 0);
+            console.log(`  Room ${currentRoom.id}: ${segmentsAfterSync} segments AFTER sync (modified)`);
+            state.rooms.set(currentRoom.id, {
+              ...currentRoom,
+              walls: updatedWalls
+            });
+          }
+        }
+        // console.log('✨ Paired doors synced');
       }
 
       state.isCalculatingEnvelopes = false;

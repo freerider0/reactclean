@@ -15,6 +15,7 @@ import {
   ZoomPercentage
 } from './components/ui/SimpleComponents';
 import { WallPropertiesPanel } from './components/ui/WallPropertiesPanel';
+import { WallsListPanel } from './components/ui/WallsListPanel';
 import { ConstraintToolbar } from './components/ui/ConstraintToolbar';
 import { SettingsModal } from './components/ui/SettingsModal';
 import { ApertureEditModal } from './components/ui/ApertureEditModal';
@@ -96,6 +97,7 @@ export const FloorplanPage: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isConfigSubMenuOpen, setIsConfigSubMenuOpen] = useState(config.menuOpenByDefault ?? true);
   const [selectedConfigCategory, setSelectedConfigCategory] = useState<'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | 'debug' | null>(null);
+  const [showWallsList, setShowWallsList] = useState(false);
 
   // Blur focused element when config submenu closes
   useEffect(() => {
@@ -435,8 +437,28 @@ export const FloorplanPage: React.FC = () => {
     clearWallSelection();
   };
 
+  const handleWallClick = (roomId: string, wallIndex: number) => {
+    // Close the walls list panel
+    setShowWallsList(false);
+
+    // Select the room and wall (for highlighting)
+    const state = useFloorplanStore.getState();
+    state.selectRoom(roomId, false); // Select the room
+    state.selectEdge(wallIndex); // Select the wall/edge
+  };
+
   // Main menu structure - starts directly at tools level
   const mainMenuItems: MenuItem[] = useMemo(() => [
+    {
+      id: 'all-walls',
+      label: 'All Walls',
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+        </svg>
+      ),
+      onSelect: () => setShowWallsList(true)
+    },
     {
       id: 'export',
       label: 'Export',
@@ -676,6 +698,15 @@ export const FloorplanPage: React.FC = () => {
           onUpdateWallHeight={handleUpdateWallHeight}
           onUpdateWallApertures={handleUpdateWallApertures}
           onClose={handleCloseWallPanel}
+        />
+      )}
+
+      {/* Walls List Panel - Show all walls across all rooms */}
+      {showWallsList && (
+        <WallsListPanel
+          rooms={rooms}
+          onClose={() => setShowWallsList(false)}
+          onWallClick={handleWallClick}
         />
       )}
 

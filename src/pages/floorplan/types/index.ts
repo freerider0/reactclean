@@ -103,6 +103,7 @@ export interface Wall {
 export interface Room {
   id: string;
   name: string;
+  createdAt: number;  // Timestamp when room was created (for paired door priority)
 
   // Geometry (local coordinates)
   vertices: Vertex[];  // Inner floor boundary - SOURCE OF TRUTH with UUIDs

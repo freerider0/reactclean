@@ -811,7 +811,11 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
       if (selectedRoom) {
         // Priority 1: Aperture (open edit modal)
-        if (hitResult.aperture && hitResult.aperture.roomId === selectedRoom.id) {
+        if (hitResult.aperture) {
+          // Select the room that contains the aperture (important for paired doors)
+          if (hitResult.aperture.roomId !== selectedRoom.id) {
+            selectRoom(hitResult.aperture.roomId);
+          }
           // console.log('  ✅ HIT APERTURE:', hitResult.aperture);
           selectAperture(hitResult.aperture.apertureId, hitResult.aperture.wallIndex);
           return;
@@ -1285,8 +1289,14 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
         // Priority 3: Aperture (door/window)
         if (hitResult.aperture) {
+          // Select the room that contains the aperture (important for paired doors)
+          const room = rooms.find(r => r.id === hitResult.aperture!.roomId);
+          if (room) {
+            selectRoom(room.id);
+            selectEdge(hitResult.aperture.wallIndex); // Select the wall/edge containing the aperture
+          }
           // console.log('🎯 Aperture clicked:', hitResult.aperture.apertureId);
-          // Handle aperture interaction if needed
+          return;
         }
 
         // Priority 4: Room interior (for dragging)

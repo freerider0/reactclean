@@ -284,8 +284,8 @@ function shouldSkipPairedDoor(
         );
 
         if (dist < 5) {
-          // Found a paired door - only draw from the room with smaller ID to avoid duplicates
-          return currentRoom.id > otherRoom.id;
+          // Found a paired door - only draw from the room with older timestamp to avoid duplicates
+          return (currentRoom.createdAt || 0) > (otherRoom.createdAt || 0);
         }
       }
     }
