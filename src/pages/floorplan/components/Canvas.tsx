@@ -670,8 +670,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     }
 
     // Draw apertures (doors/windows) on top of segments so they're always visible
+    // Pass all rooms to enable paired door detection
     rooms.forEach(room => {
-      drawApertures(ctx, room, viewport);
+      drawApertures(ctx, room, viewport, rooms);
     });
 
     // Draw room joining snap indicators (in assembly mode during drag)

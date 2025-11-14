@@ -147,10 +147,114 @@ export function drawEnvelope(
  * Draw apertures (doors and windows) on walls
  * Should be called AFTER walls/envelope are drawn to ensure visibility
  */
+/**
+ * Helper to calculate aperture center in world coordinates
+ */
+function getApertureCenter(
+  room: Room,
+  wallIndex: number,
+  aperture: Aperture,
+  worldVertices: Vertex[]
+): Vertex | null {
+  const wall = room.walls[wallIndex];
+  if (!wall) return null;
+
+  const inner1 = worldVertices[wall.vertexIndex];
+  const inner2 = worldVertices[(wall.vertexIndex + 1) % worldVertices.length];
+
+  const wallDx = inner2.x - inner1.x;
+  const wallDy = inner2.y - inner1.y;
+  const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
+
+  if (wallLength === 0) return null;
+
+  // Calculate aperture position
+  const apertureWidthPx = aperture.width * 100;
+  let startDist: number;
+  if (aperture.anchorVertex === 'end') {
+    startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+  } else {
+    startDist = aperture.distance * 100;
+  }
+  const centerDist = startDist + apertureWidthPx / 2;
+
+  const unitX = wallDx / wallLength;
+  const unitY = wallDy / wallLength;
+
+  const perpX = unitY;
+  const perpY = -unitX;
+
+  // Center on inner edge
+  const innerCenter = {
+    x: inner1.x + unitX * centerDist,
+    y: inner1.y + unitY * centerDist
+  };
+
+  // Offset by half wall thickness to get centerline position
+  return {
+    id: 'aperture_center',
+    x: innerCenter.x + perpX * (wall.thickness / 2),
+    y: innerCenter.y + perpY * (wall.thickness / 2)
+  };
+}
+
+/**
+ * Check if this aperture has a paired door in another room
+ * Returns true if we should skip drawing this door
+ */
+function shouldSkipPairedDoor(
+  currentRoom: Room,
+  wallIndex: number,
+  aperture: Aperture,
+  currentWorldVertices: Vertex[],
+  allRooms: Room[]
+): boolean {
+  // Only check for doors, not windows
+  if (aperture.type !== 'door') return false;
+
+  const currentCenter = getApertureCenter(currentRoom, wallIndex, aperture, currentWorldVertices);
+  if (!currentCenter) return false;
+
+  // Check all other rooms for doors at the same position
+  for (const otherRoom of allRooms) {
+    if (otherRoom.id === currentRoom.id) continue;
+    if (!otherRoom.walls) continue;
+
+    const otherWorldVertices = otherRoom.vertices.map(v =>
+      localToWorld(v, otherRoom.position, otherRoom.rotation, otherRoom.scale)
+    );
+
+    for (let otherWallIndex = 0; otherWallIndex < otherRoom.walls.length; otherWallIndex++) {
+      const otherWall = otherRoom.walls[otherWallIndex];
+      if (!otherWall.apertures) continue;
+
+      for (const otherAperture of otherWall.apertures) {
+        if (otherAperture.type !== 'door') continue;
+
+        const otherCenter = getApertureCenter(otherRoom, otherWallIndex, otherAperture, otherWorldVertices);
+        if (!otherCenter) continue;
+
+        // Check if doors are at same position (within 5px threshold)
+        const dist = Math.sqrt(
+          (currentCenter.x - otherCenter.x) ** 2 + (currentCenter.y - otherCenter.y) ** 2
+        );
+
+        if (dist < 5) {
+          // Found a paired door - only draw from the room with smaller ID to avoid duplicates
+          return currentRoom.id > otherRoom.id;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 export function drawApertures(
   ctx: CanvasRenderingContext2D,
   room: Room,
-  viewport: Viewport
+  viewport: Viewport,
+  allRooms?: Room[]
 ): void {
   if (!room.walls || room.walls.length === 0) return;
 
@@ -192,6 +296,11 @@ export function drawApertures(
 
     // Draw each aperture
     for (const aperture of wall.apertures) {
+      // Skip paired doors if we have access to all rooms
+      if (allRooms && shouldSkipPairedDoor(room, wallIndex, aperture, worldVertices, allRooms)) {
+        continue;
+      }
+
       // Convert aperture width from meters to pixels (1m = 100px)
       const apertureWidthPx = aperture.width * 100;
 
@@ -231,7 +340,7 @@ export function drawApertures(
       const screenOuterApertureStart = worldToScreen(outerApertureStart, viewport);
       const screenOuterApertureEnd = worldToScreen(outerApertureEnd, viewport);
 
-      // Draw aperture as simple white rectangle
+      // Draw aperture opening as white rectangle
       ctx.fillStyle = '#FFFFFF';
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = 2;
@@ -245,6 +354,65 @@ export function drawApertures(
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+
+      // Draw door swing arc for doors (architectural floor plan style)
+      if (aperture.type === 'door') {
+        // Hinge is at the OUTER edge of the aperture (outerApertureStart)
+        const hingePoint = screenOuterApertureStart;
+
+        // Door panel at closed position (along the outer wall edge)
+        const doorPanelEnd = screenOuterApertureEnd;
+
+        // Calculate door width in screen coordinates
+        const doorWidth = Math.sqrt(
+          (doorPanelEnd.x - hingePoint.x) ** 2 +
+          (doorPanelEnd.y - hingePoint.y) ** 2
+        );
+
+        // Calculate angle from hinge to door panel (closed position)
+        const angleToDoorPanel = Math.atan2(
+          doorPanelEnd.y - hingePoint.y,
+          doorPanelEnd.x - hingePoint.x
+        );
+
+        // Door swings inward (perpendicular to wall, into the room)
+        // Start angle is the door panel position
+        // End angle is 90 degrees counterclockwise from door panel
+        const startAngle = angleToDoorPanel;
+        const endAngle = angleToDoorPanel - Math.PI / 2;
+
+        // Draw door panel line (thin black line at closed position)
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(hingePoint.x, hingePoint.y);
+        ctx.lineTo(doorPanelEnd.x, doorPanelEnd.y);
+        ctx.stroke();
+
+        // Draw 90-degree swing arc
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(
+          hingePoint.x,
+          hingePoint.y,
+          doorWidth,
+          endAngle, // Start at open position
+          startAngle, // End at closed position
+          false
+        );
+        ctx.stroke();
+
+        // Draw line from end of arc back to hinge (door in open position)
+        // This completes the "wedge" showing the door swing area
+        const openDoorEndX = hingePoint.x + Math.cos(endAngle) * doorWidth;
+        const openDoorEndY = hingePoint.y + Math.sin(endAngle) * doorWidth;
+
+        ctx.beginPath();
+        ctx.moveTo(hingePoint.x, hingePoint.y);
+        ctx.lineTo(openDoorEndX, openDoorEndY);
+        ctx.stroke();
+      }
     }
   });
 
@@ -356,6 +524,64 @@ export function drawApertureGhost(
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+
+  // Draw door swing arc for door ghosts (architectural floor plan style)
+  if (aperture.type === 'door') {
+    ctx.setLineDash([]); // Solid lines for door arc
+
+    // Hinge is at the OUTER edge of the aperture (outerApertureStart)
+    const hingePoint = screenOuterApertureStart;
+
+    // Door panel at closed position (along the outer wall edge)
+    const doorPanelEnd = screenOuterApertureEnd;
+
+    // Calculate door width in screen coordinates
+    const doorWidth = Math.sqrt(
+      (doorPanelEnd.x - hingePoint.x) ** 2 +
+      (doorPanelEnd.y - hingePoint.y) ** 2
+    );
+
+    // Calculate angle from hinge to door panel (closed position)
+    const angleToDoorPanel = Math.atan2(
+      doorPanelEnd.y - hingePoint.y,
+      doorPanelEnd.x - hingePoint.x
+    );
+
+    // Door swings inward (perpendicular to wall, into the room)
+    const startAngle = angleToDoorPanel;
+    const endAngle = angleToDoorPanel - Math.PI / 2;
+
+    // Draw door panel line (semi-transparent)
+    ctx.strokeStyle = isValid ? 'rgba(0, 255, 255, 0.6)' : 'rgba(255, 0, 0, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(hingePoint.x, hingePoint.y);
+    ctx.lineTo(doorPanelEnd.x, doorPanelEnd.y);
+    ctx.stroke();
+
+    // Draw 90-degree swing arc
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(
+      hingePoint.x,
+      hingePoint.y,
+      doorWidth,
+      endAngle, // Start at open position
+      startAngle, // End at closed position
+      false
+    );
+    ctx.stroke();
+
+    // Draw line from end of arc back to hinge (door in open position)
+    // This completes the "wedge" showing the door swing area
+    const openDoorEndX = hingePoint.x + Math.cos(endAngle) * doorWidth;
+    const openDoorEndY = hingePoint.y + Math.sin(endAngle) * doorWidth;
+
+    ctx.beginPath();
+    ctx.moveTo(hingePoint.x, hingePoint.y);
+    ctx.lineTo(openDoorEndX, openDoorEndY);
+    ctx.stroke();
+  }
 
   ctx.setLineDash([]);
   ctx.restore();
