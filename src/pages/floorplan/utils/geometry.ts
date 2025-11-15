@@ -801,11 +801,15 @@ export async function calculateFloorplanEnvelopes(
   miterLimit: number = 2.0,
   interiorWallThickness: number = 15,
   exteriorWallThickness: number = 30
-): Promise<Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; updatedVertices?: Vertex[] }>> {
+): Promise<{
+  envelopeMap: Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; updatedVertices?: Vertex[] }>;
+  floorplanContractedEnvelopes: Vertex[][];
+}> {
   const envelopeMap = new Map<string, { envelope: Vertex[]; innerBoundary: Vertex[]; debugCenterline: Vertex[]; debugContracted: Vertex[]; updatedVertices?: Vertex[] }>();
+  const floorplanContractedEnvelopes: Vertex[][] = [];
 
   if (rooms.length === 0) {
-    return envelopeMap;
+    return { envelopeMap, floorplanContractedEnvelopes };
   }
 
   const clipper = await getClipperInstance();
@@ -940,7 +944,7 @@ export async function calculateFloorplanEnvelopes(
   }
 
   // The result is an array of paths (disconnected polygons)
-  // Each path represents a disconnected group of rooms
+  // Each path represents a disconnected group of rooms (e.g., mansion, guest house)
   for (const path of mergedPaths) {
     // Convert path back to Vertex[] format (world coordinates)
     const mergedCenterlineWorld = pathToVertices(path);
@@ -962,6 +966,9 @@ export async function calculateFloorplanEnvelopes(
     // DEBUG: Contract the merged centerline by 7.5cm (for visualization) using simple geometric offset
     // This shows the inner boundary for interior walls (centerline - 7.5cm)
     const contractedEnvelopeWorld = offsetPolygonSimple(mergedCenterlineWorld, -7.5);
+
+    // Add to floorplan-level array (one per building group)
+    floorplanContractedEnvelopes.push(contractedEnvelopeWorld);
 
     // Find which rooms belong to this envelope
     // A room belongs to an envelope if its centroid is inside the envelope
@@ -1056,5 +1063,5 @@ export async function calculateFloorplanEnvelopes(
     }
   }
 
-  return envelopeMap;
+  return { envelopeMap, floorplanContractedEnvelopes };
 }

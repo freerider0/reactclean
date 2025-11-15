@@ -648,7 +648,7 @@ export const createRoomsSlice: StateCreator<
     // });
 
     // Calculate envelopes using the latest room state (async with Clipper WebAssembly)
-    const envelopeMap = await calculateFloorplanEnvelopes(
+    const { envelopeMap, floorplanContractedEnvelopes } = await calculateFloorplanEnvelopes(
       currentRooms,
       currentConfig.miterLimit ?? 2.0,
       currentConfig.defaultInteriorWallThickness,
@@ -700,42 +700,19 @@ export const createRoomsSlice: StateCreator<
         state.rooms.set(roomId, updatedRoom);
       });
 
-      // Extract contracted envelopes with room IDs to avoid self-intersection
-      // Use fresh room data from state, not snapshot
-      const envelopesByRoom = new Map<string, Vertex[]>();
-
-      state.rooms.forEach((freshRoom, roomId) => {
-        if (!freshRoom.debugContractedEnvelope) return;
-
-        // Convert contracted envelope to world coordinates
-        const worldEnvelope = freshRoom.debugContractedEnvelope.map(v => ({
-          id: v.id,
-          x: (v.x * Math.cos(freshRoom.rotation) - v.y * Math.sin(freshRoom.rotation)) * freshRoom.scale + freshRoom.position.x,
-          y: (v.x * Math.sin(freshRoom.rotation) + v.y * Math.cos(freshRoom.rotation)) * freshRoom.scale + freshRoom.position.y
-        }));
-
-        envelopesByRoom.set(roomId, worldEnvelope);
-      });
-
-      // Store for visualization
-      state.contractedEnvelopes = Array.from(envelopesByRoom.values());
-      // console.log(`📐 Extracted ${envelopesByRoom.size} contracted envelope(s)`);
+      // Store floorplan-level contracted envelopes for visualization
+      // These are already in world coordinates and merged per building group
+      state.contractedEnvelopes = floorplanContractedEnvelopes;
+      console.log(`📐 Floorplan has ${floorplanContractedEnvelopes.length} contracted envelope(s) (one per building group)`);
 
       // Calculate wall segments based on contracted envelope intersections
-      if (envelopesByRoom.size > 0) {
-        // console.log('🔷 Calculating wall segments...');
+      if (floorplanContractedEnvelopes.length > 0) {
+        console.log('🔷 Calculating wall segments...');
 
-        // For each room, only check intersections with OTHER rooms' envelopes
-        // Use fresh room data from state, not the snapshot
-        const roomsWithSegments = Array.from(state.rooms.values()).map(room => {
-          // Get envelopes excluding this room's own envelope
-          const otherEnvelopes = Array.from(envelopesByRoom.entries())
-            .filter(([roomId]) => roomId !== room.id)
-            .map(([_, envelope]) => envelope);
-
-          // Calculate segments with only other rooms' envelopes
-          return calculateWallSegmentsForAllRooms([room], otherEnvelopes)[0];
-        });
+        // Calculate segments for ALL rooms at once, using floorplan-level envelopes
+        // No need to filter - all rooms use the same merged envelopes
+        const allRooms = Array.from(state.rooms.values());
+        const roomsWithSegments = calculateWallSegmentsForAllRooms(allRooms, floorplanContractedEnvelopes);
 
         // Update rooms with calculated segments
         // IMPORTANT: Replace the entire room object to trigger Zustand reactivity
