@@ -158,6 +158,12 @@ function drawDoorSwing(
 // --- Main Functions ---
 
 function getApertureThickness(wall: any, aperture: any, wallLength: number): number {
+  // Use stored thickness if available (calculated during segment updates)
+  if (aperture.thickness !== undefined) {
+    return aperture.thickness;
+  }
+
+  // Fall back to dynamic calculation if thickness not stored
   // Calculate door center position along wall (0 to 1)
   const apertureWidthPx = aperture.width * 100;
   let startDist: number;

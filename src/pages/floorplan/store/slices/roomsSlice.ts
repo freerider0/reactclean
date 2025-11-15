@@ -10,6 +10,48 @@ import { calculateCenterline } from '../../utils/roomJoining';
 import { solveRoom, calculateDOF, isOverConstrained } from '../../utils/constraintSolver';
 import { calculateWallSegmentsForAllRooms } from '../../utils/wallSegments';
 
+/**
+ * Helper function to calculate aperture thickness based on wall segments
+ * Same logic as getApertureThickness in rendering/apertures.ts
+ */
+function calculateApertureThickness(aperture: any, wall: any, wallLength: number): number {
+  // Calculate aperture center position along wall (0 to 1)
+  const apertureWidthPx = aperture.width * 100;
+  let startDist: number;
+  if (aperture.anchorVertex === 'end') {
+    startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+  } else {
+    startDist = aperture.distance * 100;
+  }
+  const apertureCenterDist = startDist + apertureWidthPx / 2;
+  const apertureCenterRatio = apertureCenterDist / wallLength;
+
+  // Default to wall thickness if no segments
+  if (!wall.segments || wall.segments.length === 0) {
+    return wall.thickness || 20;
+  }
+
+  // Find which segment the aperture is on
+  const segmentCount = wall.segments.length;
+  const segmentSize = 1.0 / segmentCount;
+
+  for (let i = 0; i < wall.segments.length; i++) {
+    const segmentStart = i * segmentSize;
+    const segmentEnd = (i + 1) * segmentSize;
+
+    if (apertureCenterRatio >= segmentStart && apertureCenterRatio < segmentEnd) {
+      const segment = wall.segments[i];
+      const isExterior = segment.wallType === 'exterior';
+      return isExterior ? 30 : 15;
+    }
+  }
+
+  // Fallback to last segment
+  const lastSegment = wall.segments[wall.segments.length - 1];
+  const isExterior = lastSegment.wallType === 'exterior';
+  return isExterior ? 30 : 15;
+}
+
 export const createRoomsSlice: StateCreator<
   FloorplanStore,
   [['zustand/immer', never]],
@@ -586,7 +628,6 @@ export const createRoomsSlice: StateCreator<
     return isOverConstrained(room);
   },
 
-
   /**
    * Recalculate envelopes for all rooms
    * Should be called after rooms are joined/positioned in assembly mode
@@ -713,6 +754,57 @@ export const createRoomsSlice: StateCreator<
           }
         });
         // console.log('✨ Wall segments calculated');
+
+        // Calculate and store thickness for all doors after segments are updated
+        const roomsArrayForThickness = Array.from(state.rooms.values());
+        for (const room of roomsArrayForThickness) {
+          if (!room.walls) continue;
+
+          let roomThicknessModified = false;
+          const updatedWallsWithThickness = room.walls.map(wall => {
+            if (!wall.apertures || wall.apertures.length === 0) return wall;
+
+            // Calculate wall length
+            const v1Local = room.vertices[wall.vertexIndex];
+            const v2Local = room.vertices[(wall.vertexIndex + 1) % room.vertices.length];
+            const dx = v2Local.x - v1Local.x;
+            const dy = v2Local.y - v1Local.y;
+            const wallLength = Math.sqrt(dx * dx + dy * dy);
+
+            let wallModified = false;
+            const updatedApertures = wall.apertures.map(aperture => {
+              // Calculate thickness for this aperture based on wall segments
+              const calculatedThickness = calculateApertureThickness(aperture, wall, wallLength);
+
+              // Only update if thickness changed
+              if (aperture.thickness !== calculatedThickness) {
+                wallModified = true;
+                roomThicknessModified = true;
+                return {
+                  ...aperture,
+                  thickness: calculatedThickness
+                };
+              }
+              return aperture;
+            });
+
+            if (wallModified) {
+              return {
+                ...wall,
+                apertures: updatedApertures
+              };
+            }
+            return wall;
+          });
+
+          if (roomThicknessModified) {
+            // Update room with new thickness values
+            state.rooms.set(room.id, {
+              ...room,
+              walls: updatedWallsWithThickness
+            });
+          }
+        }
 
         // Sync paired doors properties after wall segments are calculated
         // Helper: Calculate door center in world coordinates

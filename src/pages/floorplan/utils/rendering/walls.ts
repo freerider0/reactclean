@@ -530,28 +530,36 @@ export function drawWallSegmentVertices(
 
   const vertexColor = '#f59e0b'; // Orange
   const markerSize = 6;
-  const pointsToDrawSet = new Set<string>(); // Unique world positions to avoid duplicates
   const pointsToDraw: Vertex[] = [];
+  const DEDUP_TOLERANCE = 1; // 1cm - same as wallSegments.ts
 
-  // Collect all segmentVertices from all rooms
+  // Collect all segmentVertices from all rooms with proper deduplication
   allRooms.forEach(room => {
     if (!room.segmentVertices || room.segmentVertices.length === 0) return;
 
     room.segmentVertices.forEach(vertex => {
       const worldVertex = localToWorld(vertex, room.position, room.rotation, room.scale);
-      const key = `${worldVertex.x.toFixed(1)},${worldVertex.y.toFixed(1)}`;
 
-      if (!pointsToDrawSet.has(key)) {
-        pointsToDrawSet.add(key);
+      // Check if this vertex is too close to any already added vertex
+      const isDuplicate = pointsToDraw.some(existing => {
+        const dist = Math.sqrt(
+          Math.pow(worldVertex.x - existing.x, 2) +
+          Math.pow(worldVertex.y - existing.y, 2)
+        );
+        return dist < DEDUP_TOLERANCE;
+      });
+
+      if (!isDuplicate) {
         pointsToDraw.push(worldVertex);
       }
     });
   });
 
   // 4. Draw all unique points
-  pointsToDraw.forEach(worldPos => {
+  pointsToDraw.forEach((worldPos, index) => {
     const screenVertex = worldToScreen(worldPos, viewport);
 
+    // Draw orange circle
     ctx.fillStyle = vertexColor;
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
@@ -560,6 +568,13 @@ export function drawWallSegmentVertices(
     ctx.arc(screenVertex.x, screenVertex.y, markerSize, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+
+    // Draw index number
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(index.toString(), screenVertex.x, screenVertex.y - 12);
   });
 
   ctx.restore();

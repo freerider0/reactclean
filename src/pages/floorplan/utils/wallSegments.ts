@@ -26,8 +26,50 @@ export function calculateWallSegmentsForAllRooms(
   rooms: Room[],
   contractedEnvelopes: Vertex[][]
 ): Room[] {
+  // STEP 1: Globally deduplicate envelope vertices from OTHER rooms
+  const allGreenLineVertices: Vertex[] = [];
+  for (const envelope of contractedEnvelopes) {
+    allGreenLineVertices.push(...envelope);
+  }
+
+  const uniqueGreenLineVertices = deduplicateVertices(allGreenLineVertices, 1);
+  console.log(`🌍 Global: Deduplicated ${allGreenLineVertices.length} → ${uniqueGreenLineVertices.length} envelope vertices`);
+
+  // STEP 2: Collect ALL subdivision points from ALL rooms in world coords
+  const allSubdivisionPointsWorld: Vertex[] = [];
+
+  for (const room of rooms) {
+    const worldVertices = room.vertices.map(v =>
+      localToWorld(v, room.position, room.rotation, room.scale)
+    );
+
+    for (let i = 0; i < worldVertices.length; i++) {
+      const edgeStart = worldVertices[i];
+      const edgeEnd = worldVertices[(i + 1) % worldVertices.length];
+
+      // Add edge start vertex (with original ID)
+      allSubdivisionPointsWorld.push({
+        ...edgeStart,
+        id: room.vertices[i].id
+      });
+
+      // Find green line vertices that fall on this edge
+      const pointsOnEdge = findPointsOnEdge(edgeStart, edgeEnd, uniqueGreenLineVertices);
+      allSubdivisionPointsWorld.push(...pointsOnEdge.map(p => p.vertex));
+    }
+  }
+
+  // STEP 3: Globally deduplicate ALL subdivision points (same tolerance as rendering)
+  const globallyDeduplicatedPoints = deduplicateVertices(allSubdivisionPointsWorld, 1);
+  console.log(`🌍 Global: Deduplicated ${allSubdivisionPointsWorld.length} → ${globallyDeduplicatedPoints.length} subdivision points`);
+
+  // STEP 4: For each room, create segments using ONLY globally deduplicated points
   return rooms.map(room => {
-    const { segmentVerticesLocal, updatedWalls } = buildSegmentsDirectly(room, contractedEnvelopes);
+    const { segmentVerticesLocal, updatedWalls } = buildSegmentsFromGlobalPoints(
+      room,
+      globallyDeduplicatedPoints,
+      contractedEnvelopes
+    );
 
     return {
       ...room,
@@ -38,80 +80,110 @@ export function calculateWallSegmentsForAllRooms(
 }
 
 /**
- * Build segments for a room by subdividing edges where green line vertices fall
+ * Deduplicate vertices based on distance tolerance
+ */
+function deduplicateVertices(vertices: Vertex[], tolerance: number): Vertex[] {
+  const unique: Vertex[] = [];
+
+  for (const vertex of vertices) {
+    const isDuplicate = unique.some(existing => {
+      const dist = Math.sqrt(
+        Math.pow(vertex.x - existing.x, 2) +
+        Math.pow(vertex.y - existing.y, 2)
+      );
+      return dist < tolerance;
+    });
+
+    if (!isDuplicate) {
+      unique.push(vertex);
+    }
+  }
+
+  return unique;
+}
+
+/**
+ * Build segments for a room using globally deduplicated subdivision points
  * @param room - Room to process
- * @param contractedEnvelopes - Contracted envelopes from other rooms (world coords)
+ * @param globalPoints - Globally deduplicated subdivision points (world coords)
+ * @param contractedEnvelopes - Contracted envelopes for wall classification
  * @returns Segment vertices (local coords) and updated walls with segments
  */
-function buildSegmentsDirectly(
+function buildSegmentsFromGlobalPoints(
   room: Room,
+  globalPoints: Vertex[],
   contractedEnvelopes: Vertex[][]
 ): { segmentVerticesLocal: Vertex[]; updatedWalls: typeof room.walls } {
-  // Transform room vertices to world coordinates (these are the actual edges to subdivide)
+  // Transform room vertices to world coordinates
   const worldVertices = room.vertices.map(v =>
     localToWorld(v, room.position, room.rotation, room.scale)
   );
 
-  // Transform THIS room's contracted envelope (green line) to world coords
-  const worldContractedEnvelope = room.debugContractedEnvelope
-    ? room.debugContractedEnvelope.map(v => localToWorld(v, room.position, room.rotation, room.scale))
-    : [];
-
-  // Collect all green line vertices from all envelopes (this room + other rooms)
-  const allGreenLineVertices: Vertex[] = [...worldContractedEnvelope];
-  for (const envelope of contractedEnvelopes) {
-    allGreenLineVertices.push(...envelope);
-  }
-
   const allSegmentVerticesWorld: Vertex[] = [];
   const updatedWalls: typeof room.walls = [];
   const n = room.vertices.length;
+
+  console.log(`🏗️ Building segments for room with ${n} vertices (${room.walls.length} walls)`);
 
   // Process each edge once
   for (let i = 0; i < n; i++) {
     const edgeStart = worldVertices[i];
     const edgeEnd = worldVertices[(i + 1) % n];
 
-    // Build ordered vertex list for this edge
+    // Build ordered vertex list for this edge using ONLY global points
     const edgeVerticesWorld: Vertex[] = [];
 
-    // Add start vertex
-    edgeVerticesWorld.push({
-      ...edgeStart,
-      id: room.vertices[i].id
-    });
+    // Find ALL global points that lie on this edge
+    const pointsOnThisEdge: PointOnEdge[] = [];
 
-    // Find green line vertices that fall on this edge (already sorted by parametric t)
-    const pointsOnEdge = findPointsOnEdge(edgeStart, edgeEnd, allGreenLineVertices);
-    for (const point of pointsOnEdge) {
+    for (const globalPoint of globalPoints) {
+      const distance = pointToSegmentDistance(globalPoint, edgeStart, edgeEnd);
+
+      if (distance < 1) { // 1cm tolerance
+        // Calculate parametric t for sorting
+        const dx = edgeEnd.x - edgeStart.x;
+        const dy = edgeEnd.y - edgeStart.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length > 0.001) {
+          const t = Math.sqrt(
+            Math.pow(globalPoint.x - edgeStart.x, 2) +
+            Math.pow(globalPoint.y - edgeStart.y, 2)
+          ) / length;
+
+          pointsOnThisEdge.push({
+            vertex: globalPoint,
+            t
+          });
+        }
+      }
+    }
+
+    // Sort by parametric t
+    pointsOnThisEdge.sort((a, b) => a.t - b.t);
+
+    // Add all points (they're already deduplicated globally)
+    for (const point of pointsOnThisEdge) {
       edgeVerticesWorld.push(point.vertex);
     }
 
-    // Add end vertex
-    const endVertexId = room.vertices[(i + 1) % n].id;
-    edgeVerticesWorld.push({
-      ...edgeEnd,
-      id: endVertexId
-    });
-
     // Create segments for this edge
     const segments: WallSegment[] = [];
-    const allEnvelopes = worldContractedEnvelope.length > 0
-      ? [worldContractedEnvelope, ...contractedEnvelopes]
-      : contractedEnvelopes;
+
+    console.log(`Wall ${i}: edgeVerticesWorld has ${edgeVerticesWorld.length} vertices, creating ${edgeVerticesWorld.length - 1} segments`);
 
     for (let j = 0; j < edgeVerticesWorld.length - 1; j++) {
       const startVertex = edgeVerticesWorld[j];
       const endVertex = edgeVerticesWorld[j + 1];
 
-      // Classify segment by checking if midpoint is on any green line
+      // Classify segment by checking if midpoint is on any OTHER room's envelope
       const midpoint = {
         id: 'temp',
         x: (startVertex.x + endVertex.x) / 2,
         y: (startVertex.y + endVertex.y) / 2
       };
 
-      const wallType = classifySegmentType(midpoint, edgeStart, edgeEnd, allEnvelopes);
+      const wallType = classifySegmentType(midpoint, edgeStart, edgeEnd, contractedEnvelopes);
 
       segments.push({
         id: `seg_${uuidv4()}`,
@@ -156,7 +228,7 @@ function findPointsOnEdge(
   edgeEnd: Vertex,
   points: Vertex[]
 ): PointOnEdge[] {
-  const TOLERANCE = 5; // 5cm tolerance for "on edge" detection
+  const TOLERANCE = 1; // 1cm tolerance for "on edge" detection (tighter to avoid false positives)
   const result: PointOnEdge[] = [];
 
   const dx = edgeEnd.x - edgeStart.x;

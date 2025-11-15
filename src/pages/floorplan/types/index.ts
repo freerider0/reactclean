@@ -69,6 +69,7 @@ export interface Aperture {
   width: number;     // Width in meters
   height: number;    // Height in meters
   sillHeight?: number; // Sill height for windows in meters
+  thickness?: number; // Calculated thickness in cm (based on wall segment type: 30cm exterior, 15cm interior)
   // Direction configuration (doors only)
   flipHorizontal?: boolean; // Flip hinge side: false=left (default), true=right
   flipVertical?: boolean;   // Flip opening direction: false=inward (default), true=outward
