@@ -14,42 +14,87 @@ import { calculateWallSegmentsForAllRooms } from '../../utils/wallSegments';
  * Helper function to calculate aperture thickness based on wall segments
  * Same logic as getApertureThickness in rendering/apertures.ts
  */
-function calculateApertureThickness(aperture: any, wall: any, wallLength: number): number {
-  // Calculate aperture center position along wall (0 to 1)
-  const apertureWidthPx = aperture.width * 100;
-  let startDist: number;
+function calculateApertureThickness(
+  aperture: any,
+  wall: any,
+  wallLength: number,
+  room: any
+): { thickness: number; segmentId: string | undefined } {
+  // Calculate aperture center position along wall in cm
+  const apertureWidthCm = aperture.width * 100;
+  let startDistCm: number;
   if (aperture.anchorVertex === 'end') {
-    startDist = wallLength - (aperture.distance * 100) - apertureWidthPx;
+    startDistCm = wallLength - (aperture.distance * 100) - apertureWidthCm;
   } else {
-    startDist = aperture.distance * 100;
+    startDistCm = aperture.distance * 100;
   }
-  const apertureCenterDist = startDist + apertureWidthPx / 2;
-  const apertureCenterRatio = apertureCenterDist / wallLength;
+  const apertureCenterDistCm = startDistCm + apertureWidthCm / 2;
 
   // Default to wall thickness if no segments
   if (!wall.segments || wall.segments.length === 0) {
-    return wall.thickness || 20;
+    return { thickness: wall.thickness || 20, segmentId: undefined };
   }
 
-  // Find which segment the aperture is on
-  const segmentCount = wall.segments.length;
-  const segmentSize = 1.0 / segmentCount;
+  // Get segment vertices from room.segmentVertices
+  // Calculate actual segment lengths and boundaries
+  const wallStartIdx = wall.vertexIndex;
+  const wallEndIdx = (wall.vertexIndex + 1) % room.vertices.length;
+
+  // Find segment vertices that belong to this wall
+  // We need to calculate the cumulative distance along the wall
+  let cumulativeDistance = 0;
 
   for (let i = 0; i < wall.segments.length; i++) {
-    const segmentStart = i * segmentSize;
-    const segmentEnd = (i + 1) * segmentSize;
+    const segment = wall.segments[i];
 
-    if (apertureCenterRatio >= segmentStart && apertureCenterRatio < segmentEnd) {
-      const segment = wall.segments[i];
-      const isExterior = segment.wallType === 'exterior';
-      return isExterior ? 30 : 15;
+    // Get segment start and end vertices from room.segmentVertices
+    const startVertex = room.segmentVertices?.find((v: any) => v.id === segment.startVertexId);
+    const endVertex = room.segmentVertices?.find((v: any) => v.id === segment.endVertexId);
+
+    if (!startVertex || !endVertex) {
+      // Fallback: assume equal distribution if vertices not found
+      const segmentSize = 1.0 / wall.segments.length;
+      const segmentStart = i * segmentSize;
+      const segmentEnd = (i + 1) * segmentSize;
+      const apertureCenterRatio = apertureCenterDistCm / wallLength;
+
+      if (apertureCenterRatio >= segmentStart && apertureCenterRatio < segmentEnd) {
+        const isExterior = segment.wallType === 'exterior';
+        return {
+          thickness: isExterior ? 30 : 15,
+          segmentId: segment.id
+        };
+      }
+      continue;
     }
+
+    // Calculate segment length
+    const dx = endVertex.x - startVertex.x;
+    const dy = endVertex.y - startVertex.y;
+    const segmentLength = Math.sqrt(dx * dx + dy * dy);
+
+    const segmentStartDist = cumulativeDistance;
+    const segmentEndDist = cumulativeDistance + segmentLength;
+
+    // Check if aperture center falls in this segment
+    if (apertureCenterDistCm >= segmentStartDist && apertureCenterDistCm < segmentEndDist) {
+      const isExterior = segment.wallType === 'exterior';
+      return {
+        thickness: isExterior ? 30 : 15,
+        segmentId: segment.id
+      };
+    }
+
+    cumulativeDistance += segmentLength;
   }
 
   // Fallback to last segment
   const lastSegment = wall.segments[wall.segments.length - 1];
   const isExterior = lastSegment.wallType === 'exterior';
-  return isExterior ? 30 : 15;
+  return {
+    thickness: isExterior ? 30 : 15,
+    segmentId: lastSegment.id
+  };
 }
 
 export const createRoomsSlice: StateCreator<
@@ -750,16 +795,18 @@ export const createRoomsSlice: StateCreator<
 
             let wallModified = false;
             const updatedApertures = wall.apertures.map(aperture => {
-              // Calculate thickness for this aperture based on wall segments
-              const calculatedThickness = calculateApertureThickness(aperture, wall, wallLength);
+              // Calculate thickness and segmentId for this aperture based on wall segments
+              const { thickness: calculatedThickness, segmentId: calculatedSegmentId } =
+                calculateApertureThickness(aperture, wall, wallLength, room);
 
-              // Only update if thickness changed
-              if (aperture.thickness !== calculatedThickness) {
+              // Only update if thickness or segmentId changed
+              if (aperture.thickness !== calculatedThickness || aperture.segmentId !== calculatedSegmentId) {
                 wallModified = true;
                 roomThicknessModified = true;
                 return {
                   ...aperture,
-                  thickness: calculatedThickness
+                  thickness: calculatedThickness,
+                  segmentId: calculatedSegmentId
                 };
               }
               return aperture;
@@ -875,6 +922,8 @@ export const createRoomsSlice: StateCreator<
                           distance: otherAperture.distance,
                           anchorVertex: otherAperture.anchorVertex,
                           sillHeight: otherAperture.sillHeight,
+                          thickness: otherAperture.thickness,
+                          segmentId: otherAperture.segmentId,
                           flipHorizontal: otherAperture.flipHorizontal,
                           flipVertical: otherAperture.flipVertical,
                           cristal: otherAperture.cristal,
