@@ -806,6 +806,8 @@ export const createRoomsSlice: StateCreator<
                           distance: otherAperture.distance,
                           anchorVertex: otherAperture.anchorVertex,
                           sillHeight: otherAperture.sillHeight,
+                          flipHorizontal: otherAperture.flipHorizontal,
+                          flipVertical: otherAperture.flipVertical,
                           cristal: otherAperture.cristal,
                           color: otherAperture.color,
                           material: otherAperture.material,

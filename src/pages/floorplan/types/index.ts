@@ -69,6 +69,9 @@ export interface Aperture {
   width: number;     // Width in meters
   height: number;    // Height in meters
   sillHeight?: number; // Sill height for windows in meters
+  // Direction configuration (doors only)
+  flipHorizontal?: boolean; // Flip hinge side: false=left (default), true=right
+  flipVertical?: boolean;   // Flip opening direction: false=inward (default), true=outward
   // Material properties (defaults from config.apertureDefaults)
   cristal?: GlassType;
   color?: WindowColor;

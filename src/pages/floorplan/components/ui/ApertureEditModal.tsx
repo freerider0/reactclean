@@ -32,6 +32,10 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
   const [anchorVertex, setAnchorVertex] = useState<'start' | 'end'>(aperture.anchorVertex);
   const [sillHeight, setSillHeight] = useState(aperture.sillHeight || 0.9);
 
+  // Direction configuration (doors only)
+  const [flipHorizontal, setFlipHorizontal] = useState(aperture.flipHorizontal || false);
+  const [flipVertical, setFlipVertical] = useState(aperture.flipVertical || false);
+
   // Aperture-specific properties - use aperture values OR config defaults
   const [cristal, setCristal] = useState<GlassType>(aperture.cristal || defaults.cristal);
   const [color, setColor] = useState<WindowColor>(aperture.color || defaults.color);
@@ -63,6 +67,9 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
       distance,
       anchorVertex,
       sillHeight: type === 'window' ? sillHeight : undefined,
+      // Direction configuration (doors only)
+      flipHorizontal: type === 'door' ? flipHorizontal : undefined,
+      flipVertical: type === 'door' ? flipVertical : undefined,
       // Material properties - only save if different from defaults
       cristal: type === 'window' && cristal !== defaults.cristal ? cristal : undefined,
       color: color !== defaults.color ? color : undefined,
@@ -242,6 +249,63 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
               </button>
             </div>
           </div>
+
+          {/* Direction Controls (for doors only) */}
+          {type === 'door' && (
+            <>
+              {/* Horizontal Flip - Hinge Side */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">
+                      Bisagra a la Derecha
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {flipHorizontal ? 'Bisagra en el lado derecho' : 'Bisagra en el lado izquierdo (predeterminado)'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setFlipHorizontal(!flipHorizontal)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      flipHorizontal ? 'bg-red-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        flipHorizontal ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Vertical Flip - Opening Direction */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">
+                      Abre hacia Afuera
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {flipVertical ? 'Puerta abre hacia el exterior' : 'Puerta abre hacia el interior (predeterminado)'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setFlipVertical(!flipVertical)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      flipVertical ? 'bg-cyan-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        flipVertical ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Glass Type (for windows) */}
           {type === 'window' && (
