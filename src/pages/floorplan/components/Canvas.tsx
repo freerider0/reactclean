@@ -104,6 +104,28 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
   const isPanning = useFloorplanStore(state => state.isPanning);
   const contractedEnvelopes = useFloorplanStore(state => state.contractedEnvelopes);
 
+  // Get level state and functions
+  const activeLevel = useFloorplanStore(state => state.activeLevel);
+  const getRoomsByLevel = useFloorplanStore(state => state.getRoomsByLevel);
+  const getUnderlevelRooms = useFloorplanStore(state => state.getUnderlevelRooms);
+
+  // Filter rooms by active level
+  const activeLevelRooms = useMemo(() => {
+    if (!activeLevel) return rooms;
+    return getRoomsByLevel(activeLevel);
+  }, [activeLevel, rooms, getRoomsByLevel]);
+
+  // Get underlevel rooms for visualization (if enabled)
+  const underlevelRooms = useMemo(() => {
+    if (!config.showUnderlevel) return [];
+    return getUnderlevelRooms();
+  }, [config.showUnderlevel, getUnderlevelRooms, rooms, activeLevel]);
+
+  // Combined rooms for snapping (active level + underlevel)
+  const roomsForSnapping = useMemo(() => {
+    return [...activeLevelRooms, ...underlevelRooms];
+  }, [activeLevelRooms, underlevelRooms]);
+
   // Get actions from store
   const updateRoom = useFloorplanStore(state => state.updateRoom);
   const getRoomById = useFloorplanStore(state => state.getRoomById);
@@ -246,11 +268,40 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     const isEditModeDragging = editorMode === EditorMode.Edit && editDragState.current.isDragging;
 
     // Hide dark gray fill (external walls) when dragging in either mode
-    // When true, drawEnvelope will call drawWalls() to show half-thickness walls with orange snap indicators
+    // When true, drawEnvelope will call drawWalls() to show half-thickness walls with snap indicators
     // When false, drawEnvelope shows the full dark gray fill without calling drawWalls()
     const hideExternalWallsFill = isAnyRoomDragging || isEditModeDragging;
 
-    rooms.forEach(room => {
+    // 1. RENDER UNDERLEVEL FIRST (background layer with opacity)
+    if (underlevelRooms.length > 0) {
+      ctx.save();
+      ctx.globalAlpha = config.underlevelOpacity ?? 0.3;
+
+      // Draw underlevel room floors first
+      underlevelRooms.forEach(room => {
+        drawRoom(ctx, room, viewport, {
+          selected: false,
+          strokeColor: '#64748b',
+          selectedEdgeIndex: null
+        });
+      });
+
+      // Then draw underlevel envelopes (walls)
+      underlevelRooms.forEach(room => {
+        // Underlevel rooms are never selected/draggable, so no special handling needed
+        drawEnvelope(ctx, room, viewport, undefined, false, false, null, false, null);
+      });
+
+      // Finally draw underlevel apertures (doors/windows)
+      underlevelRooms.forEach(room => {
+        drawApertures(ctx, room, viewport, underlevelRooms);
+      });
+
+      ctx.restore();
+    }
+
+    // 2. RENDER ACTIVE LEVEL (normal rendering with full opacity)
+    activeLevelRooms.forEach(room => {
       // Skip rendering walls for the selected room when dragging in edit mode
       // (because they're not being updated during drag and would show stale positions)
       const isSelected = selection.selectedRoomIds.includes(room.id);
@@ -286,13 +337,13 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         editDragState.current.isDragging && editDragState.current.targetWallIndex !== null &&
         editDragState.current.targetWallIndex !== undefined && editDragState.current.targetRoomId) {
 
-      // Get source room to get aperture info
+      // Get source room to get aperture info (from active level)
       const sourceRoomId = editDragState.current.sourceRoomId;
-      const sourceRoom = rooms.find(r => r.id === sourceRoomId);
+      const sourceRoom = activeLevelRooms.find(r => r.id === sourceRoomId);
 
-      // Get target room to draw ghost on
+      // Get target room to draw ghost on (from active level)
       const targetRoomId = editDragState.current.targetRoomId;
-      const targetRoom = rooms.find(r => r.id === targetRoomId);
+      const targetRoom = activeLevelRooms.find(r => r.id === targetRoomId);
 
       if (sourceRoom && targetRoom && editDragState.current.apertureId && editDragState.current.sourceWallIndex !== undefined) {
         const sourceWall = sourceRoom.walls[editDragState.current.sourceWallIndex];
@@ -362,8 +413,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       }
     }
 
-    // Draw rooms
-    rooms.forEach(room => {
+    // Draw rooms (active level only - underlevel already rendered above)
+    activeLevelRooms.forEach(room => {
       const isSelected = selection.selectedRoomIds.includes(room.id);
       const isHover = selection.hoverRoomId === room.id;
 
@@ -655,26 +706,26 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     // Always draw if there's a selected or hovered segment (for walls list highlighting)
     const shouldDrawSegments = config.showWallTypeSegments || selection.selectedSegment || selection.hoverSegment;
     if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && shouldDrawSegments) {
-      drawSegments(ctx, rooms, viewport, selection.selectedSegment, selection.hoverSegment, config.showWallTypeSegments);
+      drawSegments(ctx, activeLevelRooms, viewport, selection.selectedSegment, selection.hoverSegment, config.showWallTypeSegments);
     }
 
     // Draw wall segment vertices (orange dots) on top of segments
     if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && config.showWallTypeSegments) {
-      drawWallSegmentVertices(ctx, rooms, viewport);
+      drawWallSegmentVertices(ctx, activeLevelRooms, viewport);
     }
 
     // Draw envelope vertices (debug visualization)
     if (config.showEnvelopeVertices) {
-      rooms.forEach(room => {
+      activeLevelRooms.forEach(room => {
         drawCenterlineVertexNumbers(ctx, room, viewport); // Blue circles on envelope
         drawContractedEnvelopeVertexNumbers(ctx, room, viewport); // Green circles on contracted envelope
       });
     }
 
     // Draw apertures (doors/windows) on top of segments so they're always visible
-    // Pass all rooms to enable paired door detection
-    rooms.forEach(room => {
-      drawApertures(ctx, room, viewport, rooms);
+    // Pass active level rooms to enable paired door detection (only pairs on same level)
+    activeLevelRooms.forEach(room => {
+      drawApertures(ctx, room, viewport, activeLevelRooms);
     });
 
     // Draw room joining snap indicators (in assembly mode during drag)
@@ -685,7 +736,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       if (lastSnapResult.current?.movingRoomId && lastSnapResult.current?.stationaryRoomId) {
         drawDoorCenters(
           ctx,
-          rooms,
+          activeLevelRooms,
           viewport,
           lastSnapResult.current.movingRoomId,
           lastSnapResult.current.stationaryRoomId,
@@ -696,6 +747,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     }
   }, [
     rooms,
+    activeLevelRooms,
+    underlevelRooms,
     viewport,
     config,
     editorMode,
@@ -718,8 +771,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
     const { roomId, edgeIndex } = editableDimensions.editingDimension;
 
-    // Get room
-    const room = rooms.find(r => r.id === roomId);
+    // Get room (from active level)
+    const room = activeLevelRooms.find(r => r.id === roomId);
     if (!room) {
       editableDimensions.cancelEditingDimension();
       return;
@@ -765,7 +818,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
     // Clear editing state
     editableDimensions.cancelEditingDimension();
-  }, [editableDimensions, addConstraint, rooms]);
+  }, [editableDimensions, addConstraint, activeLevelRooms]);
 
   /**
    * Handle dimension editing cancellation
@@ -940,7 +993,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             viewport.zoom,
             false,
             config.snapEnabled,
-            rooms,
+            roomsForSnapping,
             true  // isDrawingMode
           );
           const firstVertex = snapResult.position || worldPoint;
@@ -973,7 +1026,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             viewport.zoom,
             config.orthogonalSnapEnabled ?? false,
             config.snapEnabled,
-            rooms,
+            roomsForSnapping,
             true  // isDrawingMode
           );
           const snapPos = snapResult.position || worldPoint;
@@ -1078,9 +1131,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           }
         }
 
-        // Third priority: Check ALL room envelopes to see if click is in any envelope area
+        // Third priority: Check room envelopes on active level to see if click is in any envelope area
         let clickedInEnvelopeArea = false;
-        for (const room of rooms) {
+        for (const room of activeLevelRooms) {
           if (!room.envelopeVertices) continue;
 
           const worldEnvelope = room.envelopeVertices.map(v =>
@@ -1094,12 +1147,12 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           const insideRoom = pointInPolygon(worldPoint, worldRoomVertices);
 
           if (insideEnvelope && !insideRoom) {
-            // Click is in the wall thickness area - find closest room edge across ALL rooms
+            // Click is in the wall thickness area - find closest room edge on active level
             let closestRoomId: string | null = null;
             let closestEdgeIndex = -1;
             let minDistance = Infinity;
 
-            rooms.forEach(room => {
+            activeLevelRooms.forEach(room => {
               // Use vertices for edge selection
               const edgeVertices = room.vertices;
 
@@ -1149,14 +1202,14 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
                   // Long press completed - trigger paste
                   // console.log('⏱️ Long press completed on wall - pasting aperture');
 
-                  // Find closest wall to paste on
+                  // Find closest wall to paste on (active level only)
                   let targetRoomId: string | null = null;
                   let targetWallIndex: number | null = null;
                   let minWallDistance = Infinity;
                   let targetDistance = 0;
                   let targetAnchor: 'start' | 'end' = 'start';
 
-                  for (const room of rooms) {
+                  for (const room of activeLevelRooms) {
                     const vertexArray = room.vertices;
                     const n = vertexArray.length;
 
@@ -1245,8 +1298,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           }
         }
 
-        // No selected room OR clicked outside selected room - try to select a room
-        const hit = findBestHit(worldPoint, rooms);
+        // No selected room OR clicked outside selected room - try to select a room (active level only)
+        const hit = findBestHit(worldPoint, activeLevelRooms);
         if (hit && hit.roomId) {
           selectRoom(hit.roomId, e.shiftKey);
           return;
@@ -1274,7 +1327,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
         // Priority 1: Rotation handle
         if (hitResult.rotationHandle) {
-          const room = rooms.find(r => r.id === hitResult.rotationHandle!.roomId);
+          const room = activeLevelRooms.find(r => r.id === hitResult.rotationHandle!.roomId);
           if (room) {
             // console.log('🎯 Rotation handle clicked!');
             assemblyDragState.current = createRotationDragState(room, worldPoint);
@@ -1292,7 +1345,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         // Priority 3: Aperture (door/window)
         if (hitResult.aperture) {
           // Select the room that contains the aperture (important for paired doors)
-          const room = rooms.find(r => r.id === hitResult.aperture!.roomId);
+          const room = activeLevelRooms.find(r => r.id === hitResult.aperture!.roomId);
           if (room) {
             selectRoom(room.id);
             selectEdge(hitResult.aperture.wallIndex); // Select the wall/edge containing the aperture
@@ -1303,7 +1356,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
 
         // Priority 4: Room interior (for dragging)
         if (hitResult.room) {
-          const room = rooms.find(r => r.id === hitResult.room!.roomId);
+          const room = activeLevelRooms.find(r => r.id === hitResult.room!.roomId);
           if (room) {
             // console.log('🎯 Room clicked:', room.id);
             selectRoom(room.id, e.shiftKey);
@@ -1339,7 +1392,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         return;
       }
     }
-  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, roomsMap, getSelectedRoom, selectRoom, selectVertex, selectEdge, selectSegment, setEditorMode, clearAllSelection, startDrawing, addDrawingVertex, startPanning, updateRoom, recalculateAllEnvelopes, copyAperture, pasteAperture, apertureClipboard, showVisualFeedback]);
+  }, [editorMode, toolMode, spacePressed, viewport, drawing, selection, rooms, roomsMap, activeLevelRooms, roomsForSnapping, getSelectedRoom, selectRoom, selectVertex, selectEdge, selectSegment, setEditorMode, clearAllSelection, startDrawing, addDrawingVertex, startPanning, updateRoom, recalculateAllEnvelopes, copyAperture, pasteAperture, apertureClipboard, showVisualFeedback]);
 
   /**
    * Mouse move handler
@@ -1390,7 +1443,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           viewport.zoom,
           config.orthogonalSnapEnabled ?? false, // orthogonalEnabled
           config.snapEnabled,
-          rooms,
+          roomsForSnapping,
           true  // isDrawingMode
         );
 
@@ -1433,7 +1486,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           });
           return;
         } else if (editDragState.current.dragType === 'aperture' && editDragState.current.apertureId) {
-          // Aperture drag - detect target wall across ALL rooms
+          // Aperture drag - detect target wall on active level
           let targetWallIndex: number | null = null;
           let targetRoomId: string | null = null;
           let minDistance = Infinity;
@@ -1443,8 +1496,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
           // Trigger re-render so ghost updates during drag
           setCurrentMouseWorld(worldPoint);
 
-          // Check walls on ALL rooms (not just selected room) - find closest wall
-          for (const room of rooms) {
+          // Check walls on active level rooms - find closest wall
+          for (const room of activeLevelRooms) {
             const vertexArray = room.vertices;
             const n = vertexArray.length;
 
@@ -1589,7 +1642,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
               gridSize: config.size,
               roomJoiningEnabled: true,
               draggedRoom: { ...selectedRoom, position: assemblyDragState.current.originalPosition, rotation: assemblyDragState.current.originalRotation || selectedRoom.rotation },
-              allRooms: rooms,
+              allRooms: activeLevelRooms,
               visualizationOnly: true
             });
 
@@ -1600,8 +1653,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         }
       }
 
-      // Update hover state for rooms
-      const hit = findBestHit(worldPoint, rooms);
+      // Update hover state for rooms (active level only)
+      const hit = findBestHit(worldPoint, activeLevelRooms);
       if (hit && hit.roomId) {
         setHoverRoom(hit.roomId);
       } else {
@@ -1609,7 +1662,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       }
       return;
     }
-  }, [editorMode, viewport, drawing, selection, rooms, getSelectedRoom, getFirstSelectedRoomId, config, selectionRectangle, updateRoom, setHoverRoom, setHoverVertex, setHoverEdge, setHoverWall, panViewport, isPanning, panStartPoint, setCurrentMouseWorld, clearLongPressTimer]);
+  }, [editorMode, viewport, drawing, selection, rooms, activeLevelRooms, roomsForSnapping, getSelectedRoom, getFirstSelectedRoomId, config, selectionRectangle, updateRoom, setHoverRoom, setHoverVertex, setHoverEdge, setHoverWall, panViewport, isPanning, panStartPoint, setCurrentMouseWorld, clearLongPressTimer]);
 
   /**
    * Mouse up handler
@@ -1631,14 +1684,14 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       if (distance <= LONG_PRESS_MOVE_THRESHOLD) {
         // console.log('⏱️ Long press released - checking for wall paste');
 
-        // Find closest wall across ALL rooms
+        // Find closest wall on active level
         let targetRoomId: string | null = null;
         let targetWallIndex: number | null = null;
         let minDistance = Infinity;
         let targetDistance = 0;
         let targetAnchor: 'start' | 'end' = 'start';
 
-        for (const room of rooms) {
+        for (const room of activeLevelRooms) {
           const vertexArray = room.vertices;
           const n = vertexArray.length;
 
@@ -1716,9 +1769,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         y: Math.max(start.y, end.y)
       };
 
-      // Find all rooms that intersect with the rectangle
+      // Find all rooms on active level that intersect with the rectangle
       const selectedRoomIds: string[] = [];
-      for (const room of rooms) {
+      for (const room of activeLevelRooms) {
         // Transform room vertices to world coordinates
         const worldVertices = room.vertices.map(v =>
           localToWorld(v, room.position, room.rotation, room.scale)
@@ -1796,9 +1849,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         if (apertureId !== undefined && sourceWallIndex !== undefined &&
             sourceRoomId && targetRoomId && targetWallIndex !== null && targetWallIndex !== undefined) {
 
-          // Get source and target rooms
-          const sourceRoom = rooms.find(r => r.id === sourceRoomId);
-          const targetRoom = rooms.find(r => r.id === targetRoomId);
+          // Get source and target rooms (from active level)
+          const sourceRoom = activeLevelRooms.find(r => r.id === sourceRoomId);
+          const targetRoom = activeLevelRooms.find(r => r.id === targetRoomId);
 
           if (!sourceRoom || !targetRoom) {
             console.warn('Source or target room not found');
@@ -1954,7 +2007,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
             originalRotation: assemblyDragState.current.originalRotation,
             startPoint: assemblyDragState.current.startPoint,
             endPoint: worldPoint,
-            allRooms: rooms
+            allRooms: activeLevelRooms
           });
 
           if (finalSnap && finalSnap.snapped) {
@@ -1986,7 +2039,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
         }
       }
     }
-  }, [spacePressed, viewport, editorMode, selectionRectangle, rooms, selection, getSelectedRoom, getFirstSelectedRoomId, updateRoom, clearVertexSelection, clearEdgeSelection, clearWallSelection, selectRooms, clearAllSelection, stopPanning, recalculateAllEnvelopes, apertureClipboard, pasteAperture, showVisualFeedback, clearLongPressTimer]);
+  }, [spacePressed, viewport, editorMode, selectionRectangle, rooms, activeLevelRooms, selection, getSelectedRoom, getFirstSelectedRoomId, updateRoom, clearVertexSelection, clearEdgeSelection, clearWallSelection, selectRooms, clearAllSelection, stopPanning, recalculateAllEnvelopes, apertureClipboard, pasteAperture, showVisualFeedback, clearLongPressTimer]);
 
   /**
    * Setup wheel zoom with passive: false

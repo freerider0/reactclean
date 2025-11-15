@@ -168,14 +168,14 @@ export function WallsListPanel({
   }, [setHoverRoom, setHoverWall, setHoverSegment]);
 
   return (
-    <div className="absolute right-4 top-20 bg-white rounded-lg shadow-lg p-4 w-96 max-h-[calc(100vh-100px)] overflow-y-auto">
+    <div className="absolute right-4 top-20 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 w-96 max-h-[calc(100vh-100px)] overflow-y-auto border border-gray-200 dark:border-gray-700">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           All Walls ({allWalls.length})
         </h3>
         <button
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600"
+          className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -190,34 +190,34 @@ export function WallsListPanel({
             onClick={() => handleWallClick(wallInfo)}
             onMouseEnter={() => handleWallHover(wallInfo)}
             onMouseLeave={() => handleWallHover(null)}
-            className="p-3 border border-gray-200 rounded-md hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition-colors"
+            className="p-3 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-300 dark:hover:border-blue-600 cursor-pointer transition-colors"
           >
             <div className="flex justify-between items-start mb-1">
-              <span className="font-medium text-sm text-gray-900">
+              <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
                 {wallInfo.roomName}
               </span>
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
                 Wall {wallInfo.wallIndex + 1}{wallInfo.isSegment ? ` (Seg ${wallInfo.segmentIndex! + 1})` : ''}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
               <div>
-                <span className="text-gray-500">Length:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">Length:</span>{' '}
                 <span className="font-medium">{wallInfo.length.toFixed(2)}m</span>
               </div>
               <div>
-                <span className="text-gray-500">Height:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">Height:</span>{' '}
                 <span className="font-medium">{wallInfo.height.toFixed(2)}m</span>
               </div>
               <div>
-                <span className="text-gray-500">Angle:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">Angle:</span>{' '}
                 <span className="font-medium">
                   {wallInfo.angleDegrees.toFixed(1)}° ({wallInfo.compassDirection})
                 </span>
               </div>
               <div>
-                <span className="text-gray-500">Type:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">Type:</span>{' '}
                 <span className="font-medium">{WALL_TYPE_LABELS[wallInfo.wallType]}</span>
               </div>
             </div>
@@ -226,7 +226,7 @@ export function WallsListPanel({
       </div>
 
       {allWalls.length === 0 && (
-        <div className="text-center text-gray-500 py-8">
+        <div className="text-center text-gray-500 dark:text-gray-400 py-8">
           No walls found
         </div>
       )}

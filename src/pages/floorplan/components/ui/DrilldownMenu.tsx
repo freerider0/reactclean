@@ -165,10 +165,10 @@ export function DrilldownMenu({
         {/* Back/Title button */}
         <button
           onClick={stack.length === 1 ? handleClose : handleBack}
-          className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2 focus:outline-none select-none"
+          className="bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all flex items-center gap-2 focus:outline-none select-none"
           disabled={isExiting}
         >
-          <div className="text-gray-600 flex-shrink-0">
+          <div className="text-gray-600 dark:text-gray-400 flex-shrink-0">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
@@ -181,16 +181,16 @@ export function DrilldownMenu({
           <button
             key={item.id}
             onClick={() => handleItemClick(item)}
-            className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2 focus:outline-none select-none group"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all flex items-center gap-2 focus:outline-none select-none group"
             title={item.label}
             disabled={isExiting}
           >
-            <div className="text-gray-600 flex-shrink-0">
+            <div className="text-gray-600 dark:text-gray-400 flex-shrink-0">
               {item.icon}
             </div>
             <span className="flex-1 text-left truncate">{item.label}</span>
             {item.submenu && (
-              <div className="text-gray-400 flex-shrink-0 group-hover:text-gray-600">
+              <div className="text-gray-400 dark:text-gray-500 flex-shrink-0 group-hover:text-gray-600 dark:group-hover:text-gray-300">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>

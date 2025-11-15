@@ -20,6 +20,7 @@ import { createSelectionSlice } from './slices/selectionSlice';
 import { createViewportSlice } from './slices/viewportSlice';
 import { createDrawingSlice } from './slices/drawingSlice';
 import { createHistorySlice } from './slices/historySlice';
+import { createLevelsSlice } from './slices/levelsSlice';
 
 // Default configuration
 const DEFAULT_FLOORPLAN_CONFIG: FloorplanConfig = {
@@ -37,6 +38,8 @@ const DEFAULT_FLOORPLAN_CONFIG: FloorplanConfig = {
   showDimensions: false, // Hide dimensions by default
   showWallTypeSegments: true, // Show colored wall type segments by default
   showHalfWalls: true, // Show light gray half-thickness walls by default
+  showUnderlevel: false, // Hide underlevel by default
+  underlevelOpacity: 0.3, // 30% opacity for underlevel
 
   // Wall thickness settings
   defaultInteriorWallThickness: 15, // 15cm
@@ -75,6 +78,7 @@ export const useFloorplanStore = create<FloorplanStore>()(
         ...createViewportSlice(set, get),
         ...createDrawingSlice(set, get),
         ...createHistorySlice(set, get),
+        ...createLevelsSlice(set, get),
 
         // ============================================
         // GLOBAL STATE

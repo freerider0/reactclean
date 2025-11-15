@@ -31,6 +31,17 @@ export interface Viewport {
 }
 
 // ============================================================================
+// LEVEL TYPES
+// ============================================================================
+
+export interface Level {
+  id: string;
+  name: string;
+  elevation: number;  // Height in meters (0 for ground floor, 3 for first floor, etc.)
+  order: number;      // Display order (0, 1, 2...) for UI sorting
+}
+
+// ============================================================================
 // EDITOR MODES
 // ============================================================================
 
@@ -109,6 +120,7 @@ export interface Room {
   id: string;
   name: string;
   createdAt: number;  // Timestamp when room was created (for paired door priority)
+  levelId: string;     // Reference to Level (required for multi-level support)
 
   // Geometry (local coordinates)
   vertices: Vertex[];  // Inner floor boundary - SOURCE OF TRUTH with UUIDs
@@ -220,6 +232,8 @@ export interface FloorplanConfig {
   showDimensions?: boolean; // Show/hide wall dimensions
   showWallTypeSegments?: boolean; // Show/hide colored wall type segments
   showHalfWalls?: boolean; // Show/hide light gray half-thickness walls
+  showUnderlevel?: boolean; // Show/hide level below current active level (for snapping/alignment)
+  underlevelOpacity?: number; // Opacity for underlevel rendering (0.0-1.0, default 0.3)
 
   // Wall thickness settings
   defaultInteriorWallThickness: number; // Default interior wall thickness in cm

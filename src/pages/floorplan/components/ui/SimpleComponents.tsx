@@ -36,20 +36,20 @@ export function ViewControlButtons({
 }: ViewControlButtonsProps) {
   return (
     <div className="absolute top-4 right-4 flex flex-col gap-2">
-      <div className="flex flex-col bg-white rounded-full shadow-lg overflow-hidden">
+      <div className="flex flex-col bg-white dark:bg-gray-800 rounded-full shadow-lg overflow-hidden">
         <button
           onClick={onZoomIn}
-          className="w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          className="w-10 h-10 flex items-center justify-center text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
           title="Zoom In"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
           </svg>
         </button>
-        <div className="h-px bg-gray-200" />
+        <div className="h-px bg-gray-200 dark:bg-gray-700" />
         <button
           onClick={onZoomOut}
-          className="w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          className="w-10 h-10 flex items-center justify-center text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
           title="Zoom Out"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -60,7 +60,7 @@ export function ViewControlButtons({
 
       <button
         onClick={onReset}
-        className="w-10 h-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:bg-gray-50 transition-colors"
+        className="w-10 h-10 bg-white dark:bg-gray-800 rounded-full shadow-lg flex items-center justify-center text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
         title="Reset View"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -157,8 +157,8 @@ export function BottomControlBar({
 // Zoom Percentage
 export function ZoomPercentage({ zoom }: { zoom: number }) {
   return (
-    <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur rounded-full px-3 py-1 shadow-lg">
-      <span className="text-sm font-medium text-gray-600">
+    <div className="absolute bottom-4 right-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur rounded-full px-3 py-1 shadow-lg">
+      <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
         {(zoom * 100).toFixed(0)}%
       </span>
     </div>
@@ -221,7 +221,7 @@ export function ExportImportButtons({ onExport, onImport, onSave, canSave = true
 
       <button
         onClick={onExport}
-        className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all flex items-center gap-2"
         title="Export Floorplan"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -231,7 +231,7 @@ export function ExportImportButtons({ onExport, onImport, onSave, canSave = true
       </button>
       <button
         onClick={handleImportClick}
-        className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-2"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all flex items-center gap-2"
         title="Import Floorplan"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

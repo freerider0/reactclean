@@ -15,7 +15,8 @@ import type {
   SelectionState,
   DragState,
   GeoReference,
-  GuideLine
+  GuideLine,
+  Level
 } from '../../types';
 
 // ============================================================================
@@ -167,6 +168,23 @@ export interface HistoryEntry {
   timestamp: number;
 }
 
+/**
+ * Levels Slice - Manages building levels/floors
+ */
+export interface LevelsSlice {
+  // State
+  levels: Map<string, Level>;
+  activeLevel: string | null;
+
+  // Actions
+  createLevel: (level: Omit<Level, 'id'>) => string;
+  updateLevel: (id: string, updates: Partial<Level>) => void;
+  deleteLevel: (id: string) => void;
+  setActiveLevel: (id: string) => void;
+  getRoomsByLevel: (levelId: string) => Room[];
+  getUnderlevelRooms: () => Room[];
+}
+
 // ============================================================================
 // MAIN STORE
 // ============================================================================
@@ -180,7 +198,8 @@ export interface FloorplanStore extends
   SelectionSlice,
   ViewportSlice,
   DrawingSlice,
-  HistorySlice {
+  HistorySlice,
+  LevelsSlice {
 
   // ============================================
   // GLOBAL STATE

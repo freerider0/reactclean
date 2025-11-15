@@ -20,6 +20,8 @@ import { ConstraintToolbar } from './components/ui/ConstraintToolbar';
 import { SettingsModal } from './components/ui/SettingsModal';
 import { ApertureEditModal } from './components/ui/ApertureEditModal';
 import { DrilldownMenu, MenuItem } from './components/ui/DrilldownMenu';
+import { LevelSelector } from './components/ui/LevelSelector';
+import { LevelManagementModal } from './components/ui/LevelManagementModal';
 import { EditorMode } from './types';
 import type { GeoReference } from './types/geo';
 import { generateWalls } from './utils/walls';
@@ -94,7 +96,27 @@ export const FloorplanPage: React.FC = () => {
   const deleteAperture = useFloorplanStore(state => state.deleteAperture);
   const clearApertureSelection = useFloorplanStore(state => state.clearApertureSelection);
 
+  // Level state and actions
+  const levelsMap = useFloorplanStore(state => state.levels);
+  const levels = useMemo(() => Array.from(levelsMap.values()), [levelsMap]);
+  const activeLevel = useFloorplanStore(state => state.activeLevel);
+  const setActiveLevel = useFloorplanStore(state => state.setActiveLevel);
+  const getUnderlevelRooms = useFloorplanStore(state => state.getUnderlevelRooms);
+  const createLevel = useFloorplanStore(state => state.createLevel);
+  const updateLevel = useFloorplanStore(state => state.updateLevel);
+  const deleteLevel = useFloorplanStore(state => state.deleteLevel);
+
+  // Check if there's a level below the active level
+  const hasUnderlevel = useMemo(() => {
+    if (!activeLevel) return false;
+    const currentLevel = levelsMap.get(activeLevel);
+    if (!currentLevel) return false;
+    // Check if there's a level with order = currentLevel.order - 1
+    return levels.some(level => level.order === currentLevel.order - 1);
+  }, [activeLevel, levelsMap, levels]);
+
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isLevelManagerOpen, setIsLevelManagerOpen] = useState(false);
   const [isConfigSubMenuOpen, setIsConfigSubMenuOpen] = useState(config.menuOpenByDefault ?? true);
   const [selectedConfigCategory, setSelectedConfigCategory] = useState<'visibility' | 'snapping' | 'grid' | 'walls' | 'apertures' | 'debug' | null>(null);
   const [showWallsList, setShowWallsList] = useState(false);
@@ -338,6 +360,43 @@ export const FloorplanPage: React.FC = () => {
         undoLastVertex();
         e.preventDefault();
       }
+
+      // Level switching shortcuts
+      // PageUp = Go to level above (higher order)
+      if (e.code === 'PageUp') {
+        if (activeLevel) {
+          const currentLevel = levelsMap.get(activeLevel);
+          if (currentLevel) {
+            // Find level with order = currentLevel.order + 1
+            const nextLevel = levels.find(level => level.order === currentLevel.order + 1);
+            if (nextLevel) {
+              setActiveLevel(nextLevel.id);
+            }
+          }
+        }
+        e.preventDefault();
+      }
+
+      // PageDown = Go to level below (lower order)
+      if (e.code === 'PageDown') {
+        if (activeLevel) {
+          const currentLevel = levelsMap.get(activeLevel);
+          if (currentLevel) {
+            // Find level with order = currentLevel.order - 1
+            const prevLevel = levels.find(level => level.order === currentLevel.order - 1);
+            if (prevLevel) {
+              setActiveLevel(prevLevel.id);
+            }
+          }
+        }
+        e.preventDefault();
+      }
+
+      // Toggle underlevel visibility (Ctrl+U)
+      if (e.code === 'KeyU' && (e.ctrlKey || e.metaKey)) {
+        updateConfig({ showUnderlevel: !config.showUnderlevel });
+        e.preventDefault();
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -354,7 +413,7 @@ export const FloorplanPage: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [spacePressed, setSpacePressed, drawing, cancelDrawing, clearAllSelection, clearWallSelection, clearVertexSelection, editorMode, selection, getSelectedRoom, updateRoom, deleteSelectedRooms, setEditorMode, updateConfig, config, undo, redo, copySelectedRooms, pasteRooms, undoLastVertex, selectVertex]);
+  }, [spacePressed, setSpacePressed, drawing, cancelDrawing, clearAllSelection, clearWallSelection, clearVertexSelection, editorMode, selection, getSelectedRoom, updateRoom, deleteSelectedRooms, setEditorMode, updateConfig, config, undo, redo, copySelectedRooms, pasteRooms, undoLastVertex, selectVertex, activeLevel, levelsMap, levels, setActiveLevel]);
 
   // Zoom controls
   const handleZoomIn = () => {
@@ -606,12 +665,12 @@ export const FloorplanPage: React.FC = () => {
       {/* Back Button (Top Left) */}
       <Link
         to="/"
-        className="absolute top-4 left-4 z-10 flex items-center justify-center w-10 h-10 bg-white rounded-lg shadow-lg hover:bg-gray-100 transition-colors"
+        className="absolute top-4 left-4 z-10 flex items-center justify-center w-10 h-10 bg-white dark:bg-gray-800 rounded-lg shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
         title="Back to Home"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          className="w-6 h-6 text-gray-700"
+          className="w-6 h-6 text-gray-700 dark:text-gray-300"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -644,7 +703,7 @@ export const FloorplanPage: React.FC = () => {
           {!isConfigSubMenuOpen && (
             <button
               onClick={() => setIsConfigSubMenuOpen(true)}
-              className="bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium transition-all flex items-center gap-2 focus:outline-none select-none text-gray-700 hover:bg-gray-50"
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-2 text-sm font-medium transition-all flex items-center gap-2 focus:outline-none select-none text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               title="Tools"
             >
               <svg
@@ -766,6 +825,33 @@ export const FloorplanPage: React.FC = () => {
           />
         );
       })()}
+
+      {/* Level Selector (Bottom Center) - Hide in GeoRef mode */}
+      {editorMode !== EditorMode.GeoRef && (
+        <LevelSelector
+          levels={levels}
+          activeLevel={activeLevel}
+          onSelectLevel={setActiveLevel}
+          showUnderlevel={config.showUnderlevel ?? false}
+          onToggleUnderlevel={(show) => updateConfig({ showUnderlevel: show })}
+          underlevelOpacity={config.underlevelOpacity ?? 0.3}
+          onChangeOpacity={(opacity) => updateConfig({ underlevelOpacity: opacity })}
+          onOpenLevelManager={() => setIsLevelManagerOpen(true)}
+          hasUnderlevel={hasUnderlevel}
+        />
+      )}
+
+      {/* Level Management Modal */}
+      <LevelManagementModal
+        isOpen={isLevelManagerOpen}
+        onClose={() => setIsLevelManagerOpen(false)}
+        levels={levels}
+        activeLevel={activeLevel}
+        onCreateLevel={createLevel}
+        onUpdateLevel={updateLevel}
+        onDeleteLevel={deleteLevel}
+        onSetActiveLevel={setActiveLevel}
+      />
     </div>
   );
 };

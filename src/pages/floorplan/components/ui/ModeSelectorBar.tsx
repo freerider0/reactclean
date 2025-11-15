@@ -15,14 +15,14 @@ interface ModeSelectorBarProps {
 export function ModeSelectorBar({ mode, setMode, canEdit, onCalculateWalls }: ModeSelectorBarProps) {
   return (
     <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
-      <div className="flex bg-white rounded-full shadow-lg overflow-hidden">
+      <div className="flex bg-white dark:bg-gray-800 rounded-full shadow-lg overflow-hidden">
         {/* Draw/Add Room Mode */}
         <button
           onClick={() => setMode(EditorMode.Draw)}
           className={`px-4 py-2 text-sm font-medium transition-all focus:outline-none ${
             mode === EditorMode.Draw
-              ? 'bg-green-500 text-white'
-              : 'text-gray-700 hover:bg-gray-50'
+              ? 'bg-green-500 dark:bg-green-600 text-white'
+              : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
           }`}
           title="Add Room (D)"
         >
@@ -34,15 +34,15 @@ export function ModeSelectorBar({ mode, setMode, canEdit, onCalculateWalls }: Mo
           </span>
         </button>
 
-        <div className="w-px bg-gray-200" />
+        <div className="w-px bg-gray-200 dark:bg-gray-600" />
 
         {/* GeoRef Mode */}
         <button
           onClick={() => setMode(EditorMode.GeoRef)}
           className={`px-4 py-2 text-sm font-medium transition-all ${
             mode === EditorMode.GeoRef
-              ? 'bg-purple-500 text-white'
-              : 'text-gray-700 hover:bg-gray-50'
+              ? 'bg-purple-500 dark:bg-purple-600 text-white'
+              : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
           }`}
           title="Geo-Reference Mode (R)"
         >

@@ -104,20 +104,20 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black bg-opacity-50"
+        className="absolute inset-0 bg-black bg-opacity-50 dark:bg-opacity-70"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             {aperture.type === 'door' ? 'Editar Puerta' : 'Editar Ventana'}
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -129,7 +129,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
         <div className="px-6 py-4 space-y-4">
           {/* Type */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Tipo
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -137,8 +137,8 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
                 onClick={() => setType('door')}
                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                   type === 'door'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    ? 'bg-blue-600 dark:bg-blue-700 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
                 Puerta
@@ -147,8 +147,8 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
                 onClick={() => setType('window')}
                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                   type === 'window'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    ? 'bg-blue-600 dark:bg-blue-700 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
                 Ventana
@@ -158,7 +158,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
 
           {/* Width */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Ancho (metros)
             </label>
             <input
@@ -168,13 +168,13 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
               step="0.1"
               value={width}
               onChange={(e) => setWidth(Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
           {/* Height */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Alto (metros)
             </label>
             <input
@@ -184,14 +184,14 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
               step="0.1"
               value={height}
               onChange={(e) => setHeight(Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
           {/* Sill Height (only for windows) */}
           {type === 'window' && (
             <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
+              <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
                 Altura de Alféizar (metros)
               </label>
               <input
@@ -201,14 +201,14 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
                 step="0.1"
                 value={sillHeight}
                 onChange={(e) => setSillHeight(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           )}
 
           {/* Distance */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Distancia desde {anchorVertex === 'start' ? 'inicio' : 'final'} (metros)
             </label>
             <input
@@ -217,13 +217,13 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
               step="0.1"
               value={distance}
               onChange={(e) => setDistance(Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
           {/* Anchor Vertex */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Anclaje
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -310,7 +310,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
           {/* Glass Type (for windows) */}
           {type === 'window' && (
             <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
+              <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
                 Tipo de Cristal
                 {aperture.cristal === undefined && (
                   <span className="ml-2 text-xs text-blue-600">(heredado)</span>
@@ -353,7 +353,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
 
           {/* Material */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Material
               {aperture.material === undefined && (
                 <span className="ml-2 text-xs text-blue-600">(heredado)</span>
@@ -362,7 +362,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
             <select
               value={material}
               onChange={(e) => setMaterial(e.target.value as WindowMaterial)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="madera">Madera</option>
               <option value="pvc">PVC</option>
@@ -373,7 +373,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
 
           {/* Color */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Color
               {aperture.color === undefined && (
                 <span className="ml-2 text-xs text-blue-600">(heredado)</span>
@@ -444,7 +444,7 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
 
           {/* Porcentaje Marco */}
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
               Porcentaje Marco ({type === 'door' ? 'Puerta' : 'Ventana'})
               {aperture.porcentajeMarco === undefined && (
                 <span className="ml-2 text-xs text-blue-600">(heredado)</span>
@@ -490,23 +490,23 @@ export function ApertureEditModal({ aperture, config, onSave, onDelete, onClose 
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={handleDelete}
-            className="px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+            className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
           >
             Eliminar
           </button>
           <div className="flex gap-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
               Cancelar
             </button>
             <button
               onClick={handleSave}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 rounded-lg transition-colors"
             >
               Guardar
             </button>

@@ -118,7 +118,12 @@ export const createRoomsSlice: StateCreator<
    */
   createRoom: (roomData) => {
     const id = `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const room: Room = { ...roomData, id, createdAt: Date.now() };
+
+    // Assign to active level (or default level if not specified)
+    const activeLevel = get().activeLevel;
+    const levelId = roomData.levelId || activeLevel || 'default-ground-floor';
+
+    const room: Room = { ...roomData, id, createdAt: Date.now(), levelId };
 
     set((state) => {
       state.rooms.set(id, room);
@@ -692,13 +697,45 @@ export const createRoomsSlice: StateCreator<
     //   miterLimit: currentConfig.miterLimit ?? 2.0
     // });
 
-    // Calculate envelopes using the latest room state (async with Clipper WebAssembly)
-    const { envelopeMap, floorplanContractedEnvelopes } = await calculateFloorplanEnvelopes(
-      currentRooms,
-      currentConfig.miterLimit ?? 2.0,
-      currentConfig.defaultInteriorWallThickness,
-      currentConfig.defaultExteriorWallThickness
-    );
+    // Calculate envelopes per level to avoid merging rooms across different floors
+    // Group rooms by level first
+    const roomsByLevel = new Map<string, Room[]>();
+    currentRooms.forEach(room => {
+      if (!roomsByLevel.has(room.levelId)) {
+        roomsByLevel.set(room.levelId, []);
+      }
+      roomsByLevel.get(room.levelId)!.push(room);
+    });
+
+    // Calculate envelopes for each level separately
+    const envelopeMap = new Map<string, any>();
+    const envelopesByLevel = new Map<string, any[]>(); // Track which envelopes belong to which level
+    const allContractedEnvelopes: any[] = [];
+
+    for (const [levelId, levelRooms] of roomsByLevel.entries()) {
+      console.log(`🏗️ Calculating envelopes for level ${levelId} with ${levelRooms.length} room(s)`);
+
+      const { envelopeMap: levelEnvelopeMap, floorplanContractedEnvelopes: levelContractedEnvelopes } =
+        await calculateFloorplanEnvelopes(
+          levelRooms,
+          currentConfig.miterLimit ?? 2.0,
+          currentConfig.defaultInteriorWallThickness,
+          currentConfig.defaultExteriorWallThickness
+        );
+
+      // Merge envelope maps
+      levelEnvelopeMap.forEach((value, key) => {
+        envelopeMap.set(key, value);
+      });
+
+      // Store envelopes per level
+      envelopesByLevel.set(levelId, levelContractedEnvelopes);
+
+      // Collect contracted envelopes for global visualization
+      allContractedEnvelopes.push(...levelContractedEnvelopes);
+    }
+
+    const floorplanContractedEnvelopes = allContractedEnvelopes;
 
     // Update rooms with envelope data - work entirely with fresh state data inside transaction
     set((state) => {
@@ -751,13 +788,34 @@ export const createRoomsSlice: StateCreator<
       console.log(`📐 Floorplan has ${floorplanContractedEnvelopes.length} contracted envelope(s) (one per building group)`);
 
       // Calculate wall segments based on contracted envelope intersections
+      // IMPORTANT: Calculate per level to avoid merging rooms across different floors
       if (floorplanContractedEnvelopes.length > 0) {
-        console.log('🔷 Calculating wall segments...');
+        console.log('🔷 Calculating wall segments (per level)...');
 
-        // Calculate segments for ALL rooms at once, using floorplan-level envelopes
-        // No need to filter - all rooms use the same merged envelopes
-        const allRooms = Array.from(state.rooms.values());
-        const roomsWithSegments = calculateWallSegmentsForAllRooms(allRooms, floorplanContractedEnvelopes);
+        // Group rooms by level
+        const roomsByLevelForSegments = new Map<string, Room[]>();
+        Array.from(state.rooms.values()).forEach(room => {
+          if (!roomsByLevelForSegments.has(room.levelId)) {
+            roomsByLevelForSegments.set(room.levelId, []);
+          }
+          roomsByLevelForSegments.get(room.levelId)!.push(room);
+        });
+
+        // Calculate segments for each level separately using ONLY that level's envelopes
+        const allUpdatedRooms: Room[] = [];
+        for (const [levelId, levelRooms] of roomsByLevelForSegments.entries()) {
+          console.log(`  🏗️ Processing level ${levelId} with ${levelRooms.length} room(s)`);
+
+          // Get the contracted envelopes for this specific level
+          const levelEnvelopes = envelopesByLevel.get(levelId) || [];
+
+          // Calculate segments using only this level's envelopes
+          const roomsWithSegments = calculateWallSegmentsForAllRooms(levelRooms, levelEnvelopes);
+          allUpdatedRooms.push(...roomsWithSegments);
+        }
+
+        // Use the updated rooms
+        const roomsWithSegments = allUpdatedRooms;
 
         // Update rooms with calculated segments
         // IMPORTANT: Replace the entire room object to trigger Zustand reactivity
