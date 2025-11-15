@@ -278,7 +278,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       // Pass showDebugLines from config
       // Pass selected segment for highlighting
       // Pass showHalfWalls from config to control light gray half-thickness walls visibility
-      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment, config.showHalfWalls ?? true);
+      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment, config.showHalfWalls ?? true, selection.hoverSegment);
     });
 
     // Draw aperture ghost preview (when dragging in edit mode)
@@ -652,8 +652,10 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     }
 
     // Draw segments on top of everything (in Assembly mode only, hide during drag)
-    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && config.showWallTypeSegments) {
-      drawSegments(ctx, rooms, viewport, selection.selectedSegment);
+    // Always draw if there's a selected or hovered segment (for walls list highlighting)
+    const shouldDrawSegments = config.showWallTypeSegments || selection.selectedSegment || selection.hoverSegment;
+    if (editorMode === EditorMode.Assembly && !assemblyDragState.current.isDragging && shouldDrawSegments) {
+      drawSegments(ctx, rooms, viewport, selection.selectedSegment, selection.hoverSegment, config.showWallTypeSegments);
     }
 
     // Draw wall segment vertices (orange dots) on top of segments

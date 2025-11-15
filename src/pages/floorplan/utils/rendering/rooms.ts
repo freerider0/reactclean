@@ -79,7 +79,8 @@ export function drawEnvelope(
   isDragging: boolean = false,
   showDebugLines: boolean = false,
   selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
-  showHalfWalls: boolean = false
+  showHalfWalls: boolean = false,
+  hoverSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
 ): void {
   if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
 
@@ -139,6 +140,7 @@ export function drawEnvelope(
     drawWalls(ctx, room, viewport, {
       snapSegmentWorld,
       selectedSegment,
+      hoverSegment,
       skipSegments: true  // Segments drawn separately on top
     });
   }

@@ -46,6 +46,7 @@ export function WallsListPanel({
   const [hoveredWall, setHoveredWall] = useState<{ roomId: string; wallIndex: number } | null>(null);
   const setHoverWall = useFloorplanStore(state => state.setHoverWall);
   const setHoverRoom = useFloorplanStore(state => state.setHoverRoom);
+  const setHoverSegment = useFloorplanStore(state => state.setHoverSegment);
 
   // Collect all walls from all rooms
   const allWalls = useMemo(() => {
@@ -70,12 +71,19 @@ export function WallsListPanel({
         const dy = v2.y - v1.y;
         const lengthM = Math.sqrt(dx * dx + dy * dy) / 100; // Convert cm to meters
 
-        // Calculate angle in degrees
-        const angleRad = Math.atan2(dy, dx);
-        const angleDegrees = ((angleRad * 180 / Math.PI) + 360) % 360;
+        // Calculate wall direction angle in mathematical coordinates (0° = East, counter-clockwise)
+        const wallAngleRad = Math.atan2(dy, dx);
+        const wallAngleMath = ((wallAngleRad * 180 / Math.PI) + 360) % 360;
 
-        // Get compass direction
-        const compassDirection = angleToCompassDirection(angleDegrees);
+        // Calculate normal (outward facing) angle by adding 90° (counter-clockwise in math coords)
+        const normalAngleMath = (wallAngleMath + 90) % 360;
+
+        // Convert normal from mathematical coords to CTE/compass coords (0° = North, clockwise)
+        // Formula: compass = (90 - math + 360) % 360
+        const normalAngleCTE = (90 - normalAngleMath + 360) % 360;
+
+        // Get compass direction based on normal (angleToCompassDirection expects compass angle)
+        const compassDirection = angleToCompassDirection(normalAngleMath);
 
         // If wall has segments, add each segment separately
         if (wall.segments && wall.segments.length > 0) {
@@ -93,7 +101,7 @@ export function WallsListPanel({
               wallIndex,
               segmentIndex,
               length: segmentLength,
-              angleDegrees,
+              angleDegrees: normalAngleCTE,
               compassDirection,
               height: wall.height || 2.7,
               wallType: segment.wallType,
@@ -107,7 +115,7 @@ export function WallsListPanel({
             roomName: room.name || `Room ${room.id}`,
             wallIndex,
             length: lengthM,
-            angleDegrees,
+            angleDegrees: normalAngleCTE,
             compassDirection,
             height: wall.height || 2.7,
             wallType: wall.wallType || 'interior_division',
@@ -131,10 +139,22 @@ export function WallsListPanel({
       setHoveredWall({ roomId: wallInfo.roomId, wallIndex: wallInfo.wallIndex });
       setHoverRoom(wallInfo.roomId);
       setHoverWall(wallInfo.wallIndex);
+
+      // If this is a segment, set hover segment
+      if (wallInfo.isSegment && wallInfo.segmentIndex !== undefined) {
+        setHoverSegment({
+          roomId: wallInfo.roomId,
+          wallIndex: wallInfo.wallIndex,
+          segmentIndex: wallInfo.segmentIndex
+        });
+      } else {
+        setHoverSegment(null);
+      }
     } else {
       setHoveredWall(null);
       setHoverRoom(null);
       setHoverWall(null);
+      setHoverSegment(null);
     }
   };
 
@@ -143,8 +163,9 @@ export function WallsListPanel({
     return () => {
       setHoverRoom(null);
       setHoverWall(null);
+      setHoverSegment(null);
     };
-  }, [setHoverRoom, setHoverWall]);
+  }, [setHoverRoom, setHoverWall, setHoverSegment]);
 
   return (
     <div className="absolute right-4 top-20 bg-white rounded-lg shadow-lg p-4 w-96 max-h-[calc(100vh-100px)] overflow-y-auto">

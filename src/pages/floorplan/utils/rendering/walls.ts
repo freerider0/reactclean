@@ -34,6 +34,7 @@ export function drawWalls(
     selectedWallIndex?: number | null;  // Wall index that is selected in Edit mode
     hoverWallIndex?: number | null;  // Wall index that is hovered in Edit mode
     selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null;  // Selected segment in Assembly mode
+    hoverSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null;  // Hovered segment (e.g., from walls list)
     skipSegments?: boolean;  // Skip drawing segments (they will be drawn separately on top)
   } = {}
 ): void {
@@ -115,6 +116,8 @@ export function drawWalls(
                                    options.selectedSegment.roomId === room.id &&
                                    options.selectedSegment.wallIndex === wallIndex &&
                                    options.selectedSegment.segmentIndex === segmentIndex;
+
+        // No hover highlighting for half-walls (only for segment overlay)
 
         // Look up segment vertices by ID
         const segStartLocal = segmentVertexMap.get(segment.startVertexId);
@@ -427,7 +430,9 @@ export function drawSegments(
   ctx: CanvasRenderingContext2D,
   allRooms: Room[],
   viewport: Viewport,
-  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
+  selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
+  hoverSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
+  showAllSegments: boolean = true
 ): void {
   ctx.save();
 
@@ -446,6 +451,16 @@ export function drawSegments(
                           selectedSegment.roomId === room.id &&
                           selectedSegment.wallIndex === wallIndex &&
                           selectedSegment.segmentIndex === segmentIndex;
+
+        const isHover = hoverSegment &&
+                       hoverSegment.roomId === room.id &&
+                       hoverSegment.wallIndex === wallIndex &&
+                       hoverSegment.segmentIndex === segmentIndex;
+
+        // If not showing all segments, only draw selected or hovered ones
+        if (!showAllSegments && !isSelected && !isHover) {
+          return;
+        }
 
         const segStartLocal = segmentVertexMap.get(segment.startVertexId);
         const segEndLocal = segmentVertexMap.get(segment.endVertexId);
@@ -492,14 +507,14 @@ export function drawSegments(
         ctx.closePath();
 
         const colors = {
-          exterior: isSelected ? '#16a34a' : 'rgba(34, 197, 94, 0.7)',
-          interior_division: isSelected ? '#2563eb' : 'rgba(59, 130, 246, 0.7)',
-          interior_structural: isSelected ? '#7c3aed' : 'rgba(124, 58, 237, 0.7)',
-          interior_partition: isSelected ? '#db2777' : 'rgba(219, 39, 119, 0.7)',
-          terrain_contact: isSelected ? '#65a30d' : 'rgba(101, 163, 13, 0.7)',
-          adiabatic: isSelected ? '#fbbf24' : 'rgba(251, 191, 36, 0.7)',
-          neighbor_same_block: isSelected ? '#f97316' : 'rgba(249, 115, 22, 0.7)',
-          neighbor_other_block: isSelected ? '#dc2626' : 'rgba(220, 38, 38, 0.7)'
+          exterior: isSelected ? '#16a34a' : (isHover ? 'rgba(34, 197, 94, 0.9)' : 'rgba(34, 197, 94, 0.7)'),
+          interior_division: isSelected ? '#2563eb' : (isHover ? 'rgba(59, 130, 246, 0.9)' : 'rgba(59, 130, 246, 0.7)'),
+          interior_structural: isSelected ? '#7c3aed' : (isHover ? 'rgba(124, 58, 237, 0.9)' : 'rgba(124, 58, 237, 0.7)'),
+          interior_partition: isSelected ? '#db2777' : (isHover ? 'rgba(219, 39, 119, 0.9)' : 'rgba(219, 39, 119, 0.7)'),
+          terrain_contact: isSelected ? '#65a30d' : (isHover ? 'rgba(101, 163, 13, 0.9)' : 'rgba(101, 163, 13, 0.7)'),
+          adiabatic: isSelected ? '#fbbf24' : (isHover ? 'rgba(251, 191, 36, 0.9)' : 'rgba(251, 191, 36, 0.7)'),
+          neighbor_same_block: isSelected ? '#f97316' : (isHover ? 'rgba(249, 115, 22, 0.9)' : 'rgba(249, 115, 22, 0.7)'),
+          neighbor_other_block: isSelected ? '#dc2626' : (isHover ? 'rgba(220, 38, 38, 0.9)' : 'rgba(220, 38, 38, 0.7)')
         };
 
         ctx.fillStyle = colors[segment.wallType] || 'rgba(156, 163, 175, 0.7)';
@@ -507,6 +522,10 @@ export function drawSegments(
 
         if (isSelected) {
           ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (isHover) {
+          ctx.strokeStyle = '#f59e0b'; // Orange outline for hover
           ctx.lineWidth = 2;
           ctx.stroke();
         }

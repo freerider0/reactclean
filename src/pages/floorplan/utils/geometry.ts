@@ -93,9 +93,9 @@ export function angleBetween(v1: Vertex, v2: Vertex): number {
 }
 
 /**
- * Convert angle in degrees to compass direction
- * @param degrees Angle in degrees (0-360)
- * @returns Compass direction (N, NE, E, SE, S, SW, W, NW)
+ * Convert angle in degrees to compass direction according to CTE (Código Técnico de la Edificación)
+ * @param degrees Angle in degrees (0-360, 0° = East in math coords)
+ * @returns Compass direction (Norte, Este, Sureste, Sur, Suroeste, Oeste)
  */
 export function angleToCompassDirection(degrees: number): string {
   // Normalize to 0-360
@@ -107,14 +107,17 @@ export function angleToCompassDirection(degrees: number): string {
   // Rotate by 90° and reverse: compass_angle = 90 - math_angle
   const compassAngle = (90 - normalized + 360) % 360;
 
-  if (compassAngle >= 337.5 || compassAngle < 22.5) return 'N';
-  if (compassAngle >= 22.5 && compassAngle < 67.5) return 'NE';
-  if (compassAngle >= 67.5 && compassAngle < 112.5) return 'E';
-  if (compassAngle >= 112.5 && compassAngle < 157.5) return 'SE';
-  if (compassAngle >= 157.5 && compassAngle < 202.5) return 'S';
-  if (compassAngle >= 202.5 && compassAngle < 247.5) return 'SW';
-  if (compassAngle >= 247.5 && compassAngle < 292.5) return 'W';
-  return 'NW';
+  // CTE (Código Técnico de la Edificación) classification
+  // α is measured clockwise from North (0°)
+  // Norte: α < 60° OR α ≥ 300° (covers -60° to +60° from North)
+  if (compassAngle < 60 || compassAngle >= 300) return 'Norte';
+  if (compassAngle >= 60 && compassAngle < 111) return 'Este';
+  if (compassAngle >= 111 && compassAngle < 162) return 'Sureste';
+  if (compassAngle >= 162 && compassAngle < 198) return 'Sur';
+  if (compassAngle >= 198 && compassAngle < 249) return 'Suroeste';
+  if (compassAngle >= 249 && compassAngle < 300) return 'Oeste';
+
+  return 'Norte'; // Fallback (should never reach here)
 }
 
 /**
