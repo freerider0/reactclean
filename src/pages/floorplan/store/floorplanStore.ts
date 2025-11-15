@@ -32,7 +32,7 @@ const DEFAULT_FLOORPLAN_CONFIG: FloorplanConfig = {
   orthogonalSnapEnabled: false,
 
   // Visibility settings
-  showGuideLines: false,
+  showGuideLines: true, // Show guide lines (for snapping visualization)
   showEnvelopeVertices: true,
   showDebugLines: false, // Hide debug lines (pink, yellow, green) by default
   showDimensions: false, // Hide dimensions by default

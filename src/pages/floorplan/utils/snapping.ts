@@ -444,7 +444,7 @@ function snapToCenterlineIntersections(
 
 /**
  * Snap to inner boundary (yellow line) edge intersections when drawing
- * Extends edges of EXISTING rooms by 40cm, intersects with inner boundary (yellow line)
+ * Extends edges of EXISTING rooms by a large amount, intersects with inner boundary (yellow line)
  * Same as snapToCenterlineIntersections but for yellow line instead of pink line
  */
 function snapToInnerBoundaryIntersections(
@@ -452,10 +452,17 @@ function snapToInnerBoundaryIntersections(
   lastVertex: Vertex,
   rooms: Room[]
 ): SnapResult {
-  const INTERSECTION_SNAP_THRESHOLD = 15;
-  const EDGE_EXTENSION = 40; // Extend edges by 40cm
+  const INTERSECTION_SNAP_THRESHOLD = 20; // Increased threshold for easier snapping
+  const EDGE_EXTENSION = 1000; // Extend edges by 1000cm (10 meters) for long-range alignment
 
-  const allIntersections: Vertex[] = [];
+  interface IntersectionWithEdge {
+    intersection: Vertex;
+    edgeStart: Vertex;
+    edgeEnd: Vertex;
+    edgeLength: number;
+  }
+
+  const allIntersections: IntersectionWithEdge[] = [];
 
   // For each existing room
   for (const room of rooms) {
@@ -499,7 +506,12 @@ function snapToInnerBoundaryIntersections(
           );
 
           if (intersection) {
-            allIntersections.push(intersection);
+            allIntersections.push({
+              intersection,
+              edgeStart,
+              edgeEnd,
+              edgeLength
+            });
           }
         }
       }
@@ -507,22 +519,126 @@ function snapToInnerBoundaryIntersections(
   }
 
   // Find closest intersection to mouse
-  let bestIntersection: Vertex | null = null;
+  let bestIntersection: IntersectionWithEdge | null = null;
   let bestDistance = INTERSECTION_SNAP_THRESHOLD;
 
-  for (const intersection of allIntersections) {
-    const dist = distance(point, intersection);
+  for (const item of allIntersections) {
+    const dist = distance(point, item.intersection);
     if (dist < bestDistance) {
       bestDistance = dist;
-      bestIntersection = intersection;
+      bestIntersection = item;
     }
   }
 
   if (bestIntersection) {
+    // Calculate extended edge endpoints for visualization
+    const edgeDx = bestIntersection.edgeEnd.x - bestIntersection.edgeStart.x;
+    const edgeDy = bestIntersection.edgeEnd.y - bestIntersection.edgeStart.y;
+    const edgeNormX = edgeDx / bestIntersection.edgeLength;
+    const edgeNormY = edgeDy / bestIntersection.edgeLength;
+
+    const extendedStart = {
+      x: bestIntersection.edgeStart.x - edgeNormX * EDGE_EXTENSION,
+      y: bestIntersection.edgeStart.y - edgeNormY * EDGE_EXTENSION
+    };
+    const extendedEnd = {
+      x: bestIntersection.edgeEnd.x + edgeNormX * EDGE_EXTENSION,
+      y: bestIntersection.edgeEnd.y + edgeNormY * EDGE_EXTENSION
+    };
+
     return {
       snapped: true,
-      position: bestIntersection,
-      snapType: SnapType.Edge
+      position: bestIntersection.intersection,
+      snapType: SnapType.Edge,
+      guideLine: {
+        start: extendedStart,
+        end: extendedEnd,
+        type: 'extension'
+      }
+    };
+  }
+
+  return {
+    snapped: false,
+    position: null
+  };
+}
+
+/**
+ * Snap to extended room edges (long extension lines for alignment)
+ */
+function snapToExtendedEdges(
+  point: Vertex,
+  rooms: Room[]
+): SnapResult {
+  const EDGE_EXTENSION = 1000; // 10 meters extension
+  const SNAP_THRESHOLD = 15;
+
+  let bestSnap: { point: Vertex; edge: { start: Vertex; end: Vertex; extStart: Vertex; extEnd: Vertex } } | null = null;
+  let bestDistance = SNAP_THRESHOLD;
+
+  // For each existing room
+  for (const room of rooms) {
+    if (!room.vertices || room.vertices.length < 3) continue;
+
+    const worldVertices = room.vertices.map(v => localToWorldSimple(v, room));
+
+    // For each edge of the room
+    for (let i = 0; i < worldVertices.length; i++) {
+      const edgeStart = worldVertices[i];
+      const edgeEnd = worldVertices[(i + 1) % worldVertices.length];
+
+      const edgeDx = edgeEnd.x - edgeStart.x;
+      const edgeDy = edgeEnd.y - edgeStart.y;
+      const edgeLength = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy);
+
+      if (edgeLength < 0.001) continue;
+
+      const edgeNormX = edgeDx / edgeLength;
+      const edgeNormY = edgeDy / edgeLength;
+
+      // Create extended edge
+      const extendedStart = {
+        x: edgeStart.x - edgeNormX * EDGE_EXTENSION,
+        y: edgeStart.y - edgeNormY * EDGE_EXTENSION
+      };
+      const extendedEnd = {
+        x: edgeEnd.x + edgeNormX * EDGE_EXTENSION,
+        y: edgeEnd.y + edgeNormY * EDGE_EXTENSION
+      };
+
+      // Find closest point on extended edge to mouse
+      const { distance: dist, closestPoint } = distanceToSegmentSimple(
+        point,
+        extendedStart,
+        extendedEnd
+      );
+
+      if (dist < bestDistance) {
+        bestDistance = dist;
+        bestSnap = {
+          point: closestPoint,
+          edge: {
+            start: edgeStart,
+            end: edgeEnd,
+            extStart: extendedStart,
+            extEnd: extendedEnd
+          }
+        };
+      }
+    }
+  }
+
+  if (bestSnap) {
+    return {
+      snapped: true,
+      position: bestSnap.point,
+      snapType: SnapType.Edge,
+      guideLine: {
+        start: bestSnap.edge.extStart,
+        end: bestSnap.edge.extEnd,
+        type: 'extension'
+      }
     };
   }
 
@@ -534,7 +650,7 @@ function snapToInnerBoundaryIntersections(
 
 /**
  * Combined snap with priority
- * Drawing mode: yellow line intersections > yellow line vertices > yellow line edges > orthogonal > grid
+ * Drawing mode: yellow line intersections > extended edges > yellow line vertices > yellow line edges > orthogonal > grid
  * Other modes: vertex > edge > orthogonal > grid
  */
 export function snapWithPriority(
@@ -548,9 +664,9 @@ export function snapWithPriority(
   existingRooms?: Room[],
   isDrawingMode?: boolean
 ): SnapResult {
-  // Drawing mode: Inner boundary intersections, vertices, and edges (yellow line)
+  // Drawing mode: Intersections first, then extended edges, inner boundary vertices, and edges (yellow line)
   if (isDrawingMode && existingRooms && existingRooms.length > 0) {
-    // Priority 1: Snap to intersections between extended room edges and yellow lines
+    // Priority 1: Snap to intersections between extended room edges and yellow lines (HIGHEST)
     if (lastVertex) {
       const intersectionSnap = snapToInnerBoundaryIntersections(point, lastVertex, existingRooms);
       if (intersectionSnap.snapped) {
@@ -558,7 +674,13 @@ export function snapWithPriority(
       }
     }
 
-    // Priority 2: Snap to inner boundary vertices (yellow line vertices)
+    // Priority 2: Snap to extended room edges (long alignment lines)
+    const extendedEdgeSnap = snapToExtendedEdges(point, existingRooms);
+    if (extendedEdgeSnap.snapped) {
+      return extendedEdgeSnap;
+    }
+
+    // Priority 3: Snap to inner boundary vertices (yellow line vertices)
     for (const room of existingRooms) {
       if (!room.innerBoundaryVertices || room.innerBoundaryVertices.length < 3) continue;
 
@@ -576,7 +698,7 @@ export function snapWithPriority(
       }
     }
 
-    // Priority 3: Snap to inner boundary edges (yellow line edges)
+    // Priority 4: Snap to inner boundary edges (yellow line edges)
     for (const room of existingRooms) {
       if (!room.innerBoundaryVertices || room.innerBoundaryVertices.length < 3) continue;
 

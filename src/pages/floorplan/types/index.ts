@@ -196,7 +196,7 @@ export interface SnapResult {
 export interface GuideLine {
   start: Vertex;
   end: Vertex;
-  type: 'horizontal' | 'vertical' | 'orthogonal';
+  type: 'horizontal' | 'vertical' | 'orthogonal' | 'perpendicular' | 'extension';
 }
 
 // ============================================================================
