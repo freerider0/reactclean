@@ -289,7 +289,7 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       // Then draw underlevel envelopes (walls)
       underlevelRooms.forEach(room => {
         // Underlevel rooms are never selected/draggable, so no special handling needed
-        drawEnvelope(ctx, room, viewport, undefined, false, false, null, false, null);
+        drawEnvelope(ctx, room, viewport, undefined, false, false, null, false, null, editorMode === EditorMode.Draw);
       });
 
       // Finally draw underlevel apertures (doors/windows)
@@ -329,7 +329,8 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       // Pass showDebugLines from config
       // Pass selected segment for highlighting
       // Pass showHalfWalls from config to control light gray half-thickness walls visibility
-      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment, config.showHalfWalls ?? true, selection.hoverSegment);
+      // Pass isDrawMode to show yellow inner boundary line during drawing for alignment
+      drawEnvelope(ctx, room, viewport, snapSegmentWorld, hideExternalWallsFill, config.showDebugLines ?? false, selection.selectedSegment, config.showHalfWalls ?? true, selection.hoverSegment, editorMode === EditorMode.Draw);
     });
 
     // Draw aperture ghost preview (when dragging in edit mode)

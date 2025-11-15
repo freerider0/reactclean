@@ -80,7 +80,8 @@ export function drawEnvelope(
   showDebugLines: boolean = false,
   selectedSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
   showHalfWalls: boolean = false,
-  hoverSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null
+  hoverSegment?: { roomId: string; wallIndex: number; segmentIndex: number } | null,
+  isDrawMode: boolean = false
 ): void {
   if (!room.envelopeVertices || room.envelopeVertices.length < 3) return;
 
@@ -145,8 +146,8 @@ export function drawEnvelope(
     });
   }
 
-  // YELLOW LINE: Inner boundary of exterior walls (skip when dragging or debug disabled)
-  if (!isDragging && showDebugLines && room.innerBoundaryVertices && room.innerBoundaryVertices.length >= 3) {
+  // YELLOW LINE: Inner boundary of exterior walls (always show in Draw mode for alignment, or when debug is enabled)
+  if (!isDragging && (isDrawMode || showDebugLines) && room.innerBoundaryVertices && room.innerBoundaryVertices.length >= 3) {
     const worldInnerBoundary = room.innerBoundaryVertices.map(v =>
       localToWorld(v, room.position, room.rotation, room.scale)
     );
