@@ -764,6 +764,7 @@ export const FloorplanPage: React.FC = () => {
       {showWallsList && (
         <WallsListPanel
           rooms={rooms}
+          levels={levelsMap}
           onClose={() => setShowWallsList(false)}
           onWallClick={handleWallClick}
         />

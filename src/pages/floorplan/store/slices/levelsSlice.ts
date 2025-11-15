@@ -103,6 +103,17 @@ export const createLevelsSlice: StateCreator<
     set((state) => {
       if (state.levels.has(id)) {
         state.activeLevel = id;
+
+        // Clear selections when switching levels to prevent ghost vertices from previous level
+        state.selection.selectedRoomIds = [];
+        state.selection.selectedVertexIndex = null;
+        state.selection.selectedEdgeIndex = null;
+        state.selection.selectedWallIndex = null;
+        state.selection.selectedApertureId = null;
+        state.selection.selectedApertureWallIndex = null;
+        state.selection.selectedSegment = null;
+        state.selection.diagonalConstraintMode = false;
+        state.selection.diagonalVertices = [];
       }
     });
   },

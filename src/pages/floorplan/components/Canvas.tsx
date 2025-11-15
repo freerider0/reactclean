@@ -126,6 +126,18 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     return [...activeLevelRooms, ...underlevelRooms];
   }, [activeLevelRooms, underlevelRooms]);
 
+  // Filtered room map for hit testing (active level + optional underlevel)
+  const hitTestRoomsMap = useMemo(() => {
+    const map = new Map<string, Room>();
+    // Always include active level rooms
+    activeLevelRooms.forEach(room => map.set(room.id, room));
+    // Include underlevel when visible (for snapping to corners)
+    if (config.showUnderlevel) {
+      underlevelRooms.forEach(room => map.set(room.id, room));
+    }
+    return map;
+  }, [activeLevelRooms, underlevelRooms, config.showUnderlevel]);
+
   // Get actions from store
   const updateRoom = useFloorplanStore(state => state.updateRoom);
   const getRoomById = useFloorplanStore(state => state.getRoomById);
@@ -843,9 +855,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
     const screenY = e.clientY - rect.top;
     const worldPoint = screenToWorld({ x: screenX, y: screenY }, viewport);
 
-    // Use comprehensive hit testing for all modes
+    // Use comprehensive hit testing for all modes (filtered by active level + optional underlevel)
     const hitResult = performHitTest(worldPoint, {
-      rooms: roomsMap,
+      rooms: hitTestRoomsMap,
       viewport,
       selection
     });
@@ -1317,9 +1329,9 @@ export const Canvas: React.FC<CanvasProps> = ({ showDimensions = false }) => {
       if (editorMode === EditorMode.Assembly) {
         // console.log('🏠 Assembly mode click');
 
-        // Perform comprehensive hit testing - ONE call, ALL data
+        // Perform comprehensive hit testing - ONE call, filtered by level
         const hitResult = performHitTest(worldPoint, {
-          rooms: roomsMap,  // Pass the Map, not the array
+          rooms: hitTestRoomsMap,  // Filtered by active level + optional underlevel
           viewport,
           selection
         });

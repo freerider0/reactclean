@@ -4,12 +4,13 @@
  */
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { Room, WallType } from '../../types';
+import { Room, WallType, Level } from '../../types';
 import { angleToCompassDirection } from '../../utils/geometry';
 import { useFloorplanStore } from '../../store/floorplanStore';
 
 interface WallsListPanelProps {
   rooms: Room[];
+  levels: Map<string, Level>;
   onClose: () => void;
   onWallClick?: (roomId: string, wallIndex: number) => void;
 }
@@ -25,6 +26,9 @@ interface WallInfo {
   height: number; // in meters
   wallType: WallType;
   isSegment: boolean;
+  levelId: string;
+  levelName: string;
+  levelOrder: number;
 }
 
 const WALL_TYPE_LABELS: Record<WallType, string> = {
@@ -40,6 +44,7 @@ const WALL_TYPE_LABELS: Record<WallType, string> = {
 
 export function WallsListPanel({
   rooms,
+  levels,
   onClose,
   onWallClick
 }: WallsListPanelProps) {
@@ -53,6 +58,11 @@ export function WallsListPanel({
     const walls: WallInfo[] = [];
 
     for (const room of rooms) {
+      // Get level info for this room
+      const level = levels.get(room.levelId);
+      const levelName = level?.name || 'Unknown Level';
+      const levelOrder = level?.order ?? 999; // Unknown levels go to the end
+
       // Determine which vertex array to use
       const wallsUseEnvelope = room.walls.some(w => w.vertexIndex >= room.vertices.length);
       const sourceVertices = wallsUseEnvelope && room.envelopeVertices && room.envelopeVertices.length > 0
@@ -105,7 +115,10 @@ export function WallsListPanel({
               compassDirection,
               height: wall.height || 2.7,
               wallType: segment.wallType,
-              isSegment: true
+              isSegment: true,
+              levelId: room.levelId,
+              levelName,
+              levelOrder
             });
           }
         } else {
@@ -119,14 +132,44 @@ export function WallsListPanel({
             compassDirection,
             height: wall.height || 2.7,
             wallType: wall.wallType || 'interior_division',
-            isSegment: false
+            isSegment: false,
+            levelId: room.levelId,
+            levelName,
+            levelOrder
           });
         }
       }
     }
 
     return walls;
-  }, [rooms]);
+  }, [rooms, levels]);
+
+  // Group walls by level and sort by level order
+  const wallsByLevel = useMemo(() => {
+    // Create a map of levelId -> walls
+    const grouped = new Map<string, WallInfo[]>();
+
+    for (const wall of allWalls) {
+      const existing = grouped.get(wall.levelId);
+      if (existing) {
+        existing.push(wall);
+      } else {
+        grouped.set(wall.levelId, [wall]);
+      }
+    }
+
+    // Convert to array and sort by level order
+    const sorted = Array.from(grouped.entries())
+      .map(([levelId, walls]) => ({
+        levelId,
+        levelName: walls[0].levelName,
+        levelOrder: walls[0].levelOrder,
+        walls
+      }))
+      .sort((a, b) => a.levelOrder - b.levelOrder);
+
+    return sorted;
+  }, [allWalls]);
 
   const handleWallClick = (wallInfo: WallInfo) => {
     if (onWallClick) {
@@ -183,43 +226,62 @@ export function WallsListPanel({
         </button>
       </div>
 
-      <div className="space-y-2">
-        {allWalls.map((wallInfo, index) => (
-          <div
-            key={`${wallInfo.roomId}-${wallInfo.wallIndex}${wallInfo.isSegment ? `-seg-${wallInfo.segmentIndex}` : ''}`}
-            onClick={() => handleWallClick(wallInfo)}
-            onMouseEnter={() => handleWallHover(wallInfo)}
-            onMouseLeave={() => handleWallHover(null)}
-            className="p-3 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-300 dark:hover:border-blue-600 cursor-pointer transition-colors"
-          >
-            <div className="flex justify-between items-start mb-1">
-              <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
-                {wallInfo.roomName}
-              </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                Wall {wallInfo.wallIndex + 1}{wallInfo.isSegment ? ` (Seg ${wallInfo.segmentIndex! + 1})` : ''}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Length:</span>{' '}
-                <span className="font-medium">{wallInfo.length.toFixed(2)}m</span>
-              </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Height:</span>{' '}
-                <span className="font-medium">{wallInfo.height.toFixed(2)}m</span>
-              </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Angle:</span>{' '}
-                <span className="font-medium">
-                  {wallInfo.angleDegrees.toFixed(1)}° ({wallInfo.compassDirection})
+      <div className="space-y-4">
+        {wallsByLevel.map((levelGroup) => (
+          <div key={levelGroup.levelId}>
+            {/* Level header */}
+            <div className="bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-md mb-2 border border-gray-200 dark:border-gray-600">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+                  {levelGroup.levelName}
+                </span>
+                <span className="text-xs text-gray-600 dark:text-gray-400">
+                  {levelGroup.walls.length} wall{levelGroup.walls.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Type:</span>{' '}
-                <span className="font-medium">{WALL_TYPE_LABELS[wallInfo.wallType]}</span>
-              </div>
+            </div>
+
+            {/* Walls in this level */}
+            <div className="space-y-2">
+              {levelGroup.walls.map((wallInfo) => (
+                <div
+                  key={`${wallInfo.roomId}-${wallInfo.wallIndex}${wallInfo.isSegment ? `-seg-${wallInfo.segmentIndex}` : ''}`}
+                  onClick={() => handleWallClick(wallInfo)}
+                  onMouseEnter={() => handleWallHover(wallInfo)}
+                  onMouseLeave={() => handleWallHover(null)}
+                  className="p-3 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-300 dark:hover:border-blue-600 cursor-pointer transition-colors"
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
+                      {wallInfo.roomName}
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Wall {wallInfo.wallIndex + 1}{wallInfo.isSegment ? ` (Seg ${wallInfo.segmentIndex! + 1})` : ''}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Length:</span>{' '}
+                      <span className="font-medium">{wallInfo.length.toFixed(2)}m</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Height:</span>{' '}
+                      <span className="font-medium">{wallInfo.height.toFixed(2)}m</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Angle:</span>{' '}
+                      <span className="font-medium">
+                        {wallInfo.angleDegrees.toFixed(1)}° ({wallInfo.compassDirection})
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 dark:text-gray-400">Type:</span>{' '}
+                      <span className="font-medium">{WALL_TYPE_LABELS[wallInfo.wallType]}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ))}
